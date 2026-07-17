@@ -24,7 +24,13 @@
   #tabs{display:flex;border-bottom:1px solid var(--border)}
   #tabs button{flex:1;padding:10px 4px;background:none;border:none;color:var(--text-dim);font-weight:600;font-size:13px;cursor:pointer;border-bottom:2px solid transparent}
   #tabs button.active{color:var(--text);border-bottom-color:var(--accent)}
-  #search{margin:8px;padding:9px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;width:calc(100% - 16px)}
+  #search{margin:8px 8px 4px 8px;padding:9px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;width:calc(100% - 16px)}
+  #filters{display:flex;flex-wrap:wrap;gap:6px;padding:0 8px 8px 8px}
+  #filters select{flex:1;min-width:45%;padding:7px 8px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px}
+  #filters select.on{border-color:var(--accent)}
+  #fltCount{width:100%;font-size:11.5px;color:var(--text-muted);padding:0 2px}
+  #fab{display:none;position:fixed;bottom:18px;left:14px;z-index:35;background:var(--accent);color:#fff;border:none;border-radius:24px;padding:12px 18px;font-weight:700;font-size:14px;box-shadow:0 4px 14px rgba(0,0,0,.5);cursor:pointer}
+  @media(max-width:760px){ #fab.show{display:block} }
   #list,#nearPanel{flex:1;overflow-y:auto;min-height:0}
   .row{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;gap:10px;align-items:center}
   .row:hover,.row.sel{background:var(--surface-alt)}
@@ -91,6 +97,7 @@
         <button id="mapTab">Map</button>
       </div>
       <input id="search" type="text" placeholder="Search ID, name, warehouse, type…" style="display:block">
+      <div id="filters"></div>
       <div id="list" class="active"></div>
       <div id="nearPanel">
         <div class="fld"><input id="nearTerm" type="text" placeholder="Capability: boom, skimmer, generator, SCBA, kit…"></div>
@@ -106,6 +113,7 @@
     <div id="mapDiv"></div>
   </div>
 </div>
+<button id="fab">&#9776; List</button>
 <div id="detail">
   <div class="hd">
     <div><h2 id="dTitle"></h2><div id="dSub" style="font-size:12px;color:var(--text-dim);margin-top:3px"></div></div>
@@ -210,12 +218,42 @@ async function boot(){
     if (g) select(g.graphic.attributes.eid, false);
   });
 
-  renderList(assets);
+  buildFilters();
+  renderList(currentListItems());
   $("loader").style.display = "none";
+}
+
+// ---- attribute filters (built from whatever the data actually has) ----
+const FILTER_DEFS = [
+  ["wri_region", "Region"], ["contractor_name", "Contractor"],
+  ["hazmat_manager", "Hazmat Mgr"], ["asset_type", "Type"],
+  ["asset_status", "Status"], ["asset_category", "Category"],
+];
+const filterState = {};
+function buildFilters(){
+  const host = $("filters");
+  host.innerHTML = "";
+  FILTER_DEFS.forEach(([field, label]) => {
+    const vals = [...new Set(assets.map(x => x.attrs[field]).filter(Boolean))].sort();
+    if (!vals.length) return;  // e.g. hazmat_manager appears once data exists
+    const sel = document.createElement("select");
+    sel.innerHTML = `<option value="">${label} (all)</option>` +
+      vals.map(v => `<option value="${v}">${title(String(v))}</option>`).join("");
+    sel.onchange = () => {
+      filterState[field] = sel.value || null;
+      sel.classList.toggle("on", !!sel.value);
+      renderList(currentListItems());
+    };
+    host.appendChild(sel);
+  });
+  const cnt = document.createElement("div");
+  cnt.id = "fltCount";
+  host.appendChild(cnt);
 }
 
 function drawMarkers(items){
   gLayer.removeAll();
+  if (window._nearMarker) gLayer.add(window._nearMarker);
   items.forEach(x => {
     if (!x.geom) return;
     gLayer.add(new Graphic({
@@ -238,6 +276,9 @@ function renderList(items){
     </div>`;
   }).join("");
   $("list").querySelectorAll(".row").forEach(r => r.onclick = () => select(r.dataset.eid, true));
+  const c = $("fltCount");
+  if (c) c.textContent = `${items.length} of ${assets.length} assets shown`;
+  drawMarkers(items);   // map mirrors the active filters
 }
 
 function select(eid, zoom){
@@ -263,21 +304,33 @@ function select(eid, zoom){
   $("btnMob").textContent = a.asset_status === "deployed" ? "Return from incident" : "Mobilize";
   $("btnMob").className = "btn " + (a.asset_status === "deployed" ? "red" : "blue");
   $("detail").classList.add("open");
-  drawMarkers(assets);
   renderList(currentListItems());
   if (zoom && x.geom) view.goTo({target:x.geom, zoom:9});
-  if (window.innerWidth<=760) $("panel").classList.add("hide");
+  if (window.innerWidth<=760) hidePanel();
 }
+
+function hidePanel(){ $("panel").classList.add("hide"); $("fab").classList.add("show"); }
+function showPanel(){ $("panel").classList.remove("hide"); $("fab").classList.remove("show"); }
+$("fab").onclick = () => { $("detail").classList.remove("open"); showPanel(); };
 
 let listFilter = "";
 function currentListItems(){
-  if (!listFilter) return assets;
-  const q = listFilter.toLowerCase();
-  return assets.filter(x => x.cap.includes(q) || (x.attrs.current_warehouse||"").toLowerCase().includes(q));
+  let items = assets;
+  for (const [field, val] of Object.entries(filterState)){
+    if (val) items = items.filter(x => x.attrs[field] === val);
+  }
+  if (listFilter){
+    const q = listFilter.toLowerCase();
+    items = items.filter(x => x.cap.includes(q) || (x.attrs.current_warehouse||"").toLowerCase().includes(q));
+  }
+  return items;
 }
 $("search").oninput = e => { listFilter = e.target.value.trim(); renderList(currentListItems()); };
-$("dClose").onclick = () => { $("detail").classList.remove("open"); selected=null; drawMarkers(assets); };
-$("btnZoom").onclick = () => { const x=byId[selected]; if (x&&x.geom) { view.goTo({target:x.geom, zoom:12}); if(window.innerWidth<=760) $("panel").classList.add("hide"); } };
+$("dClose").onclick = () => {
+  $("detail").classList.remove("open"); selected=null; drawMarkers(currentListItems());
+  if (window.innerWidth<=760) showPanel();
+};
+$("btnZoom").onclick = () => { const x=byId[selected]; if (x&&x.geom) { view.goTo({target:x.geom, zoom:12}); if(window.innerWidth<=760) hidePanel(); } };
 
 // tabs
 function setTab(t){
@@ -286,11 +339,12 @@ function setTab(t){
   $("list").classList.toggle("active", t==="list");
   $("nearPanel").classList.toggle("active", t==="near");
   $("search").style.display = t==="list" ? "block" : "none";
-  $("panel").classList.remove("hide");
+  $("filters").style.display = t==="list" ? "flex" : "none";
+  showPanel();
 }
 $("tabList").onclick = () => setTab("list");
 $("tabNear").onclick = () => setTab("near");
-$("mapTab").onclick = () => $("panel").classList.add("hide");
+$("mapTab").onclick = () => hidePanel();
 
 // ---- Find Nearest ----
 const R = 3958.8;
@@ -302,7 +356,7 @@ function distMi(lat1,lon1,lat2,lon2){
 $("nearGPS").onclick = () => navigator.geolocation.getCurrentPosition(
   p => { nearPt = new Point({latitude:p.coords.latitude, longitude:p.coords.longitude}); $("nearHint").textContent="Location set — ranking…"; runNearest(); },
   () => toast("Location unavailable — click the map instead"));
-$("nearClick").onclick = () => { nearMode = true; $("nearHint").textContent="Now click the incident location on the map…"; if(window.innerWidth<=760) $("panel").classList.add("hide"); };
+$("nearClick").onclick = () => { nearMode = true; $("nearHint").textContent="Now click the incident location on the map…"; if(window.innerWidth<=760) hidePanel(); };
 $("nearTerm").oninput = runNearest;
 $("nearAll").onchange = runNearest;
 
@@ -322,7 +376,9 @@ function runNearest(){
       <div style="font-size:12px;color:var(--text-dim)">${title(x.attrs.asset_type)} · ${x.attrs.current_warehouse||""}</div>
     </div>`).join("");
   $("nearResults").querySelectorAll(".nrow").forEach(r => r.onclick = () => select(r.dataset.eid, true));
-  gLayer.add(new Graphic({geometry:nearPt, symbol:{type:"simple-marker", style:"x", color:"#fff", size:14, outline:{color:"#cc0000", width:3}}}));
+  if (window._nearMarker) gLayer.remove(window._nearMarker);
+  window._nearMarker = new Graphic({geometry:nearPt, symbol:{type:"simple-marker", style:"x", color:"#fff", size:14, outline:{color:"#cc0000", width:3}}});
+  gLayer.add(window._nearMarker);
 }
 
 // ---- Mobilize / Return ----
