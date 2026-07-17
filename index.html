@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>WRI · BNSF Asset Readiness (Beta)</title>
+<link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/dark/main.css">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{
+    --bg:#0a0c10;--surface:#111827;--surface-alt:#1a2234;
+    --accent:#cc0000;--text:#e5e7eb;--text-dim:#9ca3af;--text-muted:#6b7280;
+    --border:#2a2f3a;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--deployed:#3b82f6;
+    --font:-apple-system,system-ui,'Segoe UI',Roboto,sans-serif;
+  }
+  html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;overflow:hidden}
+  #app{display:grid;grid-template-rows:48px 1fr;height:100%}
+  header{display:flex;align-items:center;gap:10px;padding:0 12px;background:var(--surface);border-bottom:2px solid var(--accent)}
+  header h1{font-size:15px;font-weight:700}
+  header .beta{font-size:10px;background:var(--accent);padding:2px 6px;border-radius:4px;font-weight:700}
+  header .who{margin-left:auto;font-size:12px;color:var(--text-dim)}
+  #main{display:grid;grid-template-columns:340px 1fr;min-height:0}
+  #panel{display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--border);min-height:0}
+  #tabs{display:flex;border-bottom:1px solid var(--border)}
+  #tabs button{flex:1;padding:10px 4px;background:none;border:none;color:var(--text-dim);font-weight:600;font-size:13px;cursor:pointer;border-bottom:2px solid transparent}
+  #tabs button.active{color:var(--text);border-bottom-color:var(--accent)}
+  #search{margin:8px;padding:9px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;width:calc(100% - 16px)}
+  #list,#nearPanel{flex:1;overflow-y:auto;min-height:0}
+  .row{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;gap:10px;align-items:center}
+  .row:hover,.row.sel{background:var(--surface-alt)}
+  .dot{width:10px;height:10px;border-radius:50%;flex:none}
+  .row .t{font-weight:600;font-size:13px}
+  .row .s{font-size:12px;color:var(--text-dim)}
+  .row .due{margin-left:auto;text-align:right;font-size:11px;color:var(--text-dim);flex:none}
+  .badge{display:inline-block;padding:1px 7px;border-radius:9px;font-size:10.5px;font-weight:700}
+  #mapDiv{width:100%;height:100%}
+  #detail{position:absolute;top:0;right:0;width:380px;max-width:100%;height:100%;background:var(--surface);border-left:1px solid var(--border);overflow-y:auto;transform:translateX(105%);transition:transform .2s;z-index:40}
+  #detail.open{transform:none}
+  #detail .hd{position:sticky;top:0;background:var(--surface);padding:12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:flex-start}
+  #detail h2{font-size:16px;line-height:1.25}
+  #detail .x{margin-left:auto;background:none;border:none;color:var(--text-dim);font-size:22px;cursor:pointer;line-height:1}
+  .sec{padding:10px 12px;border-bottom:1px solid var(--border)}
+  .sec h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px}
+  .kv{display:grid;grid-template-columns:130px 1fr;gap:3px 10px;font-size:13px}
+  .kv .k{color:var(--text-dim)}
+  .clock{display:flex;gap:8px;align-items:center;padding:6px 0;font-size:13px;border-bottom:1px dashed var(--border)}
+  .clock:last-child{border-bottom:none}
+  .clock .cn{flex:1}
+  .clock .cd{color:var(--text-dim);font-size:12px}
+  .eq{padding:5px 0;font-size:13px;border-bottom:1px dashed var(--border)}
+  .eq:last-child{border-bottom:none}
+  .eq .et{color:var(--text-dim);font-size:11.5px}
+  .btns{display:flex;gap:8px;padding:12px}
+  .btn{flex:1;padding:11px;border:none;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;color:#fff}
+  .btn.red{background:var(--accent)} .btn.blue{background:var(--deployed)} .btn.gray{background:var(--surface-alt);color:var(--text)}
+  #nearPanel{display:none;padding:10px 12px}
+  #nearPanel.active,#list.active{display:block}
+  #nearPanel .fld{margin-bottom:8px}
+  #nearPanel input[type=text]{width:100%;padding:9px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px}
+  #nearPanel label{font-size:12px;color:var(--text-dim)}
+  #nearHint{font-size:12px;color:var(--text-muted);margin:6px 0}
+  .nrow{padding:9px 0;border-bottom:1px solid var(--border);cursor:pointer}
+  .nrow .d{color:var(--warn);font-weight:700}
+  #loader{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;z-index:99}
+  .spin{width:34px;height:34px;border:4px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:sp 1s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--surface-alt);border:1px solid var(--border);padding:10px 18px;border-radius:8px;font-size:13.5px;display:none;z-index:98}
+  @media(max-width:760px){
+    #main{grid-template-columns:1fr}
+    #panel{position:absolute;inset:48px 0 0 0;z-index:30;transition:transform .2s}
+    #panel.hide{transform:translateX(-105%)}
+    #detail{width:100%}
+    #mapTab{display:block}
+  }
+  #mapTab{display:none}
+</style>
+</head>
+<body>
+<div id="loader"><div class="spin"></div><div id="loadMsg">Signing in to ArcGIS…</div></div>
+<div id="toast"></div>
+<div id="app">
+  <header>
+    <h1>BNSF Asset Readiness</h1><span class="beta">BETA</span>
+    <span class="who" id="who"></span>
+  </header>
+  <div id="main">
+    <div id="panel">
+      <div id="tabs">
+        <button id="tabList" class="active">Assets</button>
+        <button id="tabNear">Find Nearest</button>
+        <button id="mapTab">Map</button>
+      </div>
+      <input id="search" type="text" placeholder="Search ID, name, warehouse, type…" style="display:block">
+      <div id="list" class="active"></div>
+      <div id="nearPanel">
+        <div class="fld"><input id="nearTerm" type="text" placeholder="Capability: boom, skimmer, generator, SCBA, kit…"></div>
+        <div class="btns" style="padding:0 0 8px 0">
+          <button class="btn gray" id="nearGPS">Use my location</button>
+          <button class="btn gray" id="nearClick">Click map</button>
+        </div>
+        <label><input type="checkbox" id="nearAll"> include deployed / unavailable</label>
+        <div id="nearHint">Pick a location, then results rank by straight-line distance.</div>
+        <div id="nearResults"></div>
+      </div>
+    </div>
+    <div id="mapDiv"></div>
+  </div>
+</div>
+<div id="detail">
+  <div class="hd">
+    <div><h2 id="dTitle"></h2><div id="dSub" style="font-size:12px;color:var(--text-dim);margin-top:3px"></div></div>
+    <button class="x" id="dClose">&times;</button>
+  </div>
+  <div class="btns">
+    <button class="btn blue" id="btnMob">Mobilize</button>
+    <button class="btn gray" id="btnZoom">Zoom to</button>
+  </div>
+  <div class="sec"><h3>Compliance clocks</h3><div id="dClocks"></div></div>
+  <div class="sec"><h3>Identity</h3><div class="kv" id="dIdent"></div></div>
+  <div class="sec"><h3>Equipment aboard</h3><div id="dEquip"></div></div>
+  <div class="sec"><h3>Notes</h3><div id="dNotes" style="font-size:13px;color:var(--text-dim)">—</div></div>
+</div>
+
+<script src="https://js.arcgis.com/4.29/"></script>
+<script>
+require([
+  "esri/identity/OAuthInfo","esri/identity/IdentityManager",
+  "esri/Map","esri/views/MapView","esri/layers/GraphicsLayer","esri/Graphic",
+  "esri/geometry/Point","esri/layers/FeatureLayer"
+], function(OAuthInfo, esriId, Map, MapView, GraphicsLayer, Graphic, Point, FeatureLayer){
+
+const SVC = "https://services6.arcgis.com/Ji79lWGR5B33LhY7/arcgis/rest/services/WRI_BNSF_Asset_Readiness/FeatureServer";
+const PORTAL = "https://www.arcgis.com";
+const COLORS = {overdue:"#ef4444", due_soon:"#f59e0b", current:"#22c55e", deployed:"#3b82f6", none:"#6b7280"};
+const SEVERITY = {overdue:0, due_soon:1, current:2, suspended:3};
+
+const $ = id => document.getElementById(id);
+const toast = m => { const t=$("toast"); t.textContent=m; t.style.display="block"; setTimeout(()=>t.style.display="none", 3200); };
+const fmtDate = ms => ms ? new Date(ms).toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric"}) : "—";
+const title = s => (s||"").replace(/_/g," ").replace(/\b\w/g, c=>c.toUpperCase());
+
+esriId.registerOAuthInfos([new OAuthInfo({appId:"4Fi59bD09H8vlidE", portalUrl:PORTAL, popup:false})]);
+
+let assets = [], byId = {}, selected = null, view, gLayer, nearMode = false, nearPt = null;
+const layers = {
+  assets: new FeatureLayer({url: SVC + "/0"}),
+  sched:  new FeatureLayer({url: SVC + "/11"}),
+  equip:  new FeatureLayer({url: SVC + "/5"}),
+  deploy: new FeatureLayer({url: SVC + "/10"}),
+};
+
+async function qAll(lyr, outFields, geom){
+  const fs = await lyr.queryFeatures({where:"1=1", outFields:[outFields||"*"], returnGeometry:!!geom, num:2000});
+  return fs.features;
+}
+
+async function boot(){
+  await esriId.checkSignInStatus(PORTAL + "/sharing").catch(() => esriId.getCredential(PORTAL + "/sharing"));
+  const cred = await esriId.getCredential(PORTAL + "/sharing");
+  $("who").textContent = cred.userId;
+  $("loadMsg").textContent = "Loading fleet…";
+
+  const [aF, sF, eF] = await Promise.all([qAll(layers.assets, "*", true), qAll(layers.sched), qAll(layers.equip)]);
+
+  const equipByAsset = {}, equipById = {};
+  eF.forEach(f => {
+    const a = f.attributes;
+    equipById[a.equip_id] = a;
+    if (a.asset_equipment_id) (equipByAsset[a.asset_equipment_id] = equipByAsset[a.asset_equipment_id] || []).push(a);
+  });
+
+  const clocksByAsset = {};
+  sF.forEach(f => {
+    const c = f.attributes;
+    let key = c.parent_key;
+    if (c.parent_level === "equipment") {
+      const eq = equipById[c.parent_key];
+      key = eq && eq.asset_equipment_id;
+      c._via = c.parent_key;
+    }
+    if (key) (clocksByAsset[key] = clocksByAsset[key] || []).push(c);
+  });
+
+  assets = aF.map(f => {
+    const a = f.attributes;
+    const clocks = (clocksByAsset[a.equipment_id] || []).sort((x,y) =>
+      (SEVERITY[x.sched_status]??9)-(SEVERITY[y.sched_status]??9) || (x.due_date||9e15)-(y.due_date||9e15));
+    const worst = clocks[0];
+    const equip = equipByAsset[a.equipment_id] || [];
+    const cap = [a.asset_type, a.asset_category, a.asset_name, a.cap_tags,
+                 equip.map(e => e.equip_type + " " + (e.equip_id||"")).join(" ")].join(" ").toLowerCase();
+    return {attrs:a, geom:f.geometry, clocks, worst, equip, cap,
+            color: a.asset_status === "deployed" ? COLORS.deployed : COLORS[worst ? worst.sched_status : "none"]};
+  });
+  assets.sort((x,y) => (SEVERITY[x.worst?.sched_status]??9)-(SEVERITY[y.worst?.sched_status]??9)
+                     || (x.worst?.due_date||9e15)-(y.worst?.due_date||9e15));
+  byId = Object.fromEntries(assets.map(x => [x.attrs.equipment_id, x]));
+
+  gLayer = new GraphicsLayer();
+  view = new MapView({
+    container:"mapDiv", map:new Map({basemap:"dark-gray-vector", layers:[gLayer]}),
+    center:[-105,44], zoom:4, popupEnabled:false,
+    ui:{components:["zoom"]}
+  });
+  drawMarkers(assets);
+  view.on("click", async ev => {
+    if (nearMode){ nearPt = ev.mapPoint; nearMode=false; $("nearHint").textContent="Location set — ranking…"; runNearest(); return; }
+    const hit = await view.hitTest(ev, {include:gLayer});
+    const g = hit.results.find(r => r.graphic && r.graphic.attributes && r.graphic.attributes.eid);
+    if (g) select(g.graphic.attributes.eid, false);
+  });
+
+  renderList(assets);
+  $("loader").style.display = "none";
+}
+
+function drawMarkers(items){
+  gLayer.removeAll();
+  items.forEach(x => {
+    if (!x.geom) return;
+    gLayer.add(new Graphic({
+      geometry: x.geom, attributes: {eid: x.attrs.equipment_id},
+      symbol: {type:"simple-marker", color:x.color, size:9,
+               outline:{color: selected===x.attrs.equipment_id ? "#fff" : "#0a0c10", width:1.4}}
+    }));
+  });
+}
+
+function badge(st){ return `<span class="badge" style="background:${COLORS[st]||COLORS.none};color:#0a0c10">${title(st||"no clocks")}</span>`; }
+
+function renderList(items){
+  $("list").innerHTML = items.map(x => {
+    const a = x.attrs, w = x.worst;
+    return `<div class="row ${selected===a.equipment_id?"sel":""}" data-eid="${a.equipment_id}">
+      <span class="dot" style="background:${x.color}"></span>
+      <div><div class="t">${a.equipment_id}</div><div class="s">${title(a.asset_type)} · ${(a.current_warehouse||a.staging_desc||"").split(" - ").pop()||""}</div></div>
+      <div class="due">${w ? title(w.sched_type)+"<br>"+fmtDate(w.due_date) : "no clocks"}</div>
+    </div>`;
+  }).join("");
+  $("list").querySelectorAll(".row").forEach(r => r.onclick = () => select(r.dataset.eid, true));
+}
+
+function select(eid, zoom){
+  selected = eid;
+  const x = byId[eid]; if (!x) return;
+  const a = x.attrs;
+  $("dTitle").textContent = a.equipment_id;
+  $("dSub").innerHTML = `${title(a.asset_type)} · ${badge(a.asset_status==="deployed"?"deployed":(x.worst?x.worst.sched_status:"none"))}`;
+  $("dClocks").innerHTML = x.clocks.length ? x.clocks.map(c =>
+    `<div class="clock"><span class="dot" style="background:${COLORS[c.sched_status]||COLORS.none}"></span>
+     <div class="cn">${title(c.sched_type)}${c._via?`<div class="cd">on ${c._via}</div>`:""}
+     ${c.sched_source==="derived"?`<div class="cd">derived date</div>`:""}</div>
+     <div class="cd">due ${fmtDate(c.due_date)}</div></div>`).join("") : "<div style='color:var(--text-muted);font-size:13px'>No clocks on record</div>";
+  const kv = [["Name",a.asset_name],["Status",title(a.asset_status)],["Warehouse",a.current_warehouse],
+    ["Base",a.base_warehouse],["Address",a.staging_desc],["WRI region",a.wri_region],
+    ["VIN",a.vin],["Plate",[a.plate_number,a.plate_state].filter(Boolean).join(" ")],
+    ["Tire year",a.tire_mfg_year],["GPS #",a.gps_tracking_num],["Holman",a.holman_no]];
+  $("dIdent").innerHTML = kv.filter(p=>p[1]).map(p=>`<div class="k">${p[0]}</div><div>${p[1]}</div>`).join("");
+  $("dEquip").innerHTML = x.equip.length ? x.equip.map(e =>
+    `<div class="eq"><b>${e.equip_id}</b><div class="et">${title(e.equip_type)}${e.serial_num?" · SN "+e.serial_num:""}</div></div>`).join("")
+    : "<div style='color:var(--text-muted);font-size:13px'>None linked (see parent-inference review)</div>";
+  $("dNotes").textContent = a.asset_notes || "—";
+  $("btnMob").textContent = a.asset_status === "deployed" ? "Return from incident" : "Mobilize";
+  $("btnMob").className = "btn " + (a.asset_status === "deployed" ? "red" : "blue");
+  $("detail").classList.add("open");
+  drawMarkers(assets);
+  renderList(currentListItems());
+  if (zoom && x.geom) view.goTo({target:x.geom, zoom:9});
+  if (window.innerWidth<=760) $("panel").classList.add("hide");
+}
+
+let listFilter = "";
+function currentListItems(){
+  if (!listFilter) return assets;
+  const q = listFilter.toLowerCase();
+  return assets.filter(x => x.cap.includes(q) || (x.attrs.current_warehouse||"").toLowerCase().includes(q));
+}
+$("search").oninput = e => { listFilter = e.target.value.trim(); renderList(currentListItems()); };
+$("dClose").onclick = () => { $("detail").classList.remove("open"); selected=null; drawMarkers(assets); };
+$("btnZoom").onclick = () => { const x=byId[selected]; if (x&&x.geom) { view.goTo({target:x.geom, zoom:12}); if(window.innerWidth<=760) $("panel").classList.add("hide"); } };
+
+// tabs
+function setTab(t){
+  $("tabList").classList.toggle("active", t==="list");
+  $("tabNear").classList.toggle("active", t==="near");
+  $("list").classList.toggle("active", t==="list");
+  $("nearPanel").classList.toggle("active", t==="near");
+  $("search").style.display = t==="list" ? "block" : "none";
+  $("panel").classList.remove("hide");
+}
+$("tabList").onclick = () => setTab("list");
+$("tabNear").onclick = () => setTab("near");
+$("mapTab").onclick = () => $("panel").classList.add("hide");
+
+// ---- Find Nearest ----
+const R = 3958.8;
+function distMi(lat1,lon1,lat2,lon2){
+  const dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+$("nearGPS").onclick = () => navigator.geolocation.getCurrentPosition(
+  p => { nearPt = new Point({latitude:p.coords.latitude, longitude:p.coords.longitude}); $("nearHint").textContent="Location set — ranking…"; runNearest(); },
+  () => toast("Location unavailable — click the map instead"));
+$("nearClick").onclick = () => { nearMode = true; $("nearHint").textContent="Now click the incident location on the map…"; if(window.innerWidth<=760) $("panel").classList.add("hide"); };
+$("nearTerm").oninput = runNearest;
+$("nearAll").onchange = runNearest;
+
+function runNearest(){
+  if (!nearPt) return;
+  const term = $("nearTerm").value.trim().toLowerCase();
+  const inclAll = $("nearAll").checked;
+  let cands = assets.filter(x => x.geom);
+  if (!inclAll) cands = cands.filter(x => x.attrs.asset_status === "available");
+  if (term) cands = cands.filter(x => x.cap.includes(term));
+  cands = cands.map(x => ({x, d: distMi(nearPt.latitude, nearPt.longitude, x.geom.latitude, x.geom.longitude)}))
+               .sort((a,b) => a.d-b.d).slice(0,12);
+  $("nearHint").textContent = cands.length ? "Straight-line distance — verify road access." : "No matching available assets.";
+  $("nearResults").innerHTML = cands.map(({x,d}) =>
+    `<div class="nrow" data-eid="${x.attrs.equipment_id}">
+      <span class="d">${d.toFixed(0)} mi</span> · <b>${x.attrs.equipment_id}</b> ${x.attrs.asset_status!=="available"?badge("deployed"):""}
+      <div style="font-size:12px;color:var(--text-dim)">${title(x.attrs.asset_type)} · ${x.attrs.current_warehouse||""}</div>
+    </div>`).join("");
+  $("nearResults").querySelectorAll(".nrow").forEach(r => r.onclick = () => select(r.dataset.eid, true));
+  gLayer.add(new Graphic({geometry:nearPt, symbol:{type:"simple-marker", style:"x", color:"#fff", size:14, outline:{color:"#cc0000", width:3}}}));
+}
+
+// ---- Mobilize / Return ----
+$("btnMob").onclick = async () => {
+  const x = byId[selected]; if (!x) return;
+  const a = x.attrs;
+  try {
+    if (a.asset_status !== "deployed") {
+      const inc = prompt("Incident ID (e.g. 2607MISSOURI):"); if (!inc) return;
+      const name = prompt("Incident name (optional):") || null;
+      const cred = await esriId.getCredential(PORTAL + "/sharing");
+      await layers.deploy.applyEdits({addFeatures:[{attributes:{
+        asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
+        incident_id: inc, incident_name: name, deploy_status: "mobilized",
+        mobilized_date: Date.now(), mobilized_by: cred.userId,
+        app_version: "webapp-beta", source_device: "browser"}}]});
+      await layers.assets.applyEdits({updateFeatures:[{attributes:{OBJECTID: a.OBJECTID, asset_status: "deployed"}}]});
+      a.asset_status = "deployed";
+      toast(a.equipment_id + " mobilized to " + inc);
+    } else {
+      const q = await layers.deploy.queryFeatures({where:`asset_equipment_id='${a.equipment_id}' AND deploy_status='mobilized'`, outFields:["*"], num:1, orderByFields:["mobilized_date DESC"]});
+      const cred = await esriId.getCredential(PORTAL + "/sharing");
+      if (q.features.length){
+        const d = q.features[0].attributes;
+        await layers.deploy.applyEdits({updateFeatures:[{attributes:{OBJECTID:d.OBJECTID, deploy_status:"returned", returned_date:Date.now(), returned_by:cred.userId}}]});
+      }
+      await layers.assets.applyEdits({updateFeatures:[{attributes:{OBJECTID:a.OBJECTID, asset_status:"available"}}]});
+      a.asset_status = "available";
+      toast(a.equipment_id + " returned — post-deployment inspection required");
+    }
+    x.color = a.asset_status === "deployed" ? COLORS.deployed : COLORS[x.worst ? x.worst.sched_status : "none"];
+    select(a.equipment_id, false);
+  } catch(e){ console.error(e); toast("Edit failed: " + (e.message||e)); }
+};
+
+boot().catch(e => { console.error(e); $("loadMsg").textContent = "Failed to load: " + (e.message||e); });
+});
+</script>
+</body>
+</html>
