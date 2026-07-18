@@ -126,10 +126,12 @@
     <button class="btn gray" id="btnDir">Directions</button>
   </div>
   <div class="btns" style="padding-top:0">
-    <button class="btn red" id="btnInsp">DOT / Condition Survey</button>
+    <button class="btn red" id="btnInsp">DOT / Condition</button>
+    <button class="btn red" id="btnCount">Inventory Count</button>
     <button class="btn gray" id="btnIssue">Report Issue</button>
   </div>
   <div class="sec"><h3>Compliance clocks</h3><div id="dClocks"></div></div>
+  <div class="sec"><h3>History</h3><div id="dHist" style="font-size:13px;color:var(--text-dim)">Loading…</div></div>
   <div class="sec"><h3>Identity</h3><div class="kv" id="dIdent"></div></div>
   <div class="sec"><h3>Equipment aboard</h3><div id="dEquip"></div></div>
   <div class="sec"><h3>Notes</h3><div id="dNotes" style="font-size:13px;color:var(--text-dim)">—</div></div>
@@ -161,6 +163,8 @@ const layers = {
   sched:  new FeatureLayer({url: SVC + "/11"}),
   equip:  new FeatureLayer({url: SVC + "/5"}),
   deploy: new FeatureLayer({url: SVC + "/10"}),
+  insp:   new FeatureLayer({url: SVC + "/2"}),
+  maint:  new FeatureLayer({url: SVC + "/7"}),
 };
 
 async function qAll(lyr, outFields, geom){
@@ -303,13 +307,17 @@ function select(eid, zoom){
     ["VIN",a.vin],["Plate",[a.plate_number,a.plate_state].filter(Boolean).join(" ")],
     ["Tire year",a.tire_mfg_year],["GPS #",a.gps_tracking_num],["Holman",a.holman_no]];
   $("dIdent").innerHTML = kv.filter(p=>p[1]).map(p=>`<div class="k">${p[0]}</div><div>${p[1]}</div>`).join("");
-  $("dEquip").innerHTML = x.equip.length ? x.equip.map(e =>
-    `<div class="eq"><b>${e.equip_id}</b><div class="et">${title(e.equip_type)}${e.serial_num?" · SN "+e.serial_num:""}</div></div>`).join("")
-    : "<div style='color:var(--text-muted);font-size:13px'>None linked (see parent-inference review)</div>";
+  const maintKind = t => t==="generator" ? "gen" : (t==="hyd_power_pack" ? "hpp" : null);
+  $("dEquip").innerHTML = x.equip.length ? x.equip.map(e => {
+    const mk = maintKind(e.equip_type);
+    const btn = mk ? ` <a href="#" onclick="openMaint('${mk}','${String(e.GlobalID).replace(/[{}]/g,"")}','${(e.equip_id||"").replace(/'/g,"")}');return false" style="color:var(--warn);font-size:11.5px;font-weight:700">Log maintenance →</a>` : "";
+    return `<div class="eq"><b>${e.equip_id}</b>${btn}<div class="et">${title(e.equip_type)}${e.serial_num?" · SN "+e.serial_num:""}</div></div>`;
+  }).join("") : "<div style='color:var(--text-muted);font-size:13px'>None linked (see parent-inference review)</div>";
   $("dNotes").textContent = a.asset_notes || "—";
   $("btnMob").textContent = a.asset_status === "deployed" ? "Return from incident" : "Mobilize";
   $("btnMob").className = "btn " + (a.asset_status === "deployed" ? "red" : "blue");
   $("detail").classList.add("open");
+  loadHistory(x);
   renderList(currentListItems());
   if (zoom && x.geom) view.goTo({target:x.geom, zoom:9});
   if (window.innerWidth<=760) hidePanel();
@@ -342,7 +350,9 @@ $("btnDir").onclick = () => {
   if (!x || !x.geom) return toast("No coordinates for this asset");
   window.open(`https://www.google.com/maps/dir/?api=1&destination=${x.geom.latitude},${x.geom.longitude}`, "_blank");
 };
-const SURVEYS = {insp:"c60619b46937485898ddd9cf5ee86d2b", issue:"c2d99f06372747fdb62d5aea7478c93c"};
+const SURVEYS = {insp:"c60619b46937485898ddd9cf5ee86d2b", issue:"c2d99f06372747fdb62d5aea7478c93c",
+                 count:"97229a03495f4f8dbe2986359314e5e6",
+                 gen:"10a014d20f4a41948aff33c5aec54a52", hpp:"bbec8795f1c9476fa8e6d34aeb843ba8"};
 function openSurvey(kind){
   const x = byId[selected]; if (!x) return;
   const a = x.attrs;
@@ -353,6 +363,46 @@ function openSurvey(kind){
 }
 $("btnInsp").onclick = () => openSurvey("insp");
 $("btnIssue").onclick = () => openSurvey("issue");
+$("btnCount").onclick = () => openSurvey("count");
+window.openMaint = (kind, equipGuid, equipId) => {
+  window.open(`https://survey123.arcgis.com/share/${SURVEYS[kind]}?` +
+    `field:equip_guid=${encodeURIComponent("{"+String(equipGuid).replace(/[{}]/g,"")+"}")}` +
+    `&field:equip_id=${encodeURIComponent(equipId)}`, "_blank");
+};
+
+// ---- history (inspections + maintenance, newest first) ----
+async function loadHistory(x){
+  const host = $("dHist");
+  host.textContent = "Loading…";
+  try {
+    const guid = String(x.attrs.GlobalID).replace(/[{}]/g,"");
+    const events = [];
+    const inspFs = await layers.insp.queryFeatures({where:`asset_guid='{${guid}}'`,
+        outFields:["insp_type","insp_status","insp_date","inspector_name","insp_notes"],
+        orderByFields:["insp_date DESC"], num:200});
+    inspFs.features.forEach(f => { const a=f.attributes;
+      events.push({when:a.insp_date, label:title(a.insp_type)+(a.insp_notes&&a.insp_notes.includes("(migrated")?" — "+a.insp_notes.replace(" (migrated from platform)","")+"":""),
+                   who:a.inspector_name, issues:a.insp_status==="completed_issues", kind:"Inspection"});
+    });
+    const eqGuids = x.equip.map(e => "'{"+String(e.GlobalID).replace(/[{}]/g,"")+"}'");
+    if (eqGuids.length){
+      const mFs = await layers.maint.queryFeatures({
+        where:`equip_guid IN (${eqGuids.join(",")})`,
+        outFields:["equip_id","event_date","performed_by","maint_status","event_notes"],
+        orderByFields:["event_date DESC"], num:200});
+      mFs.features.forEach(f => { const a=f.attributes;
+        events.push({when:a.event_date, label:"Maintenance — "+a.equip_id,
+                     who:a.performed_by, issues:a.maint_status==="completed_issues", kind:"Maintenance"});
+      });
+    }
+    events.sort((p,q) => (q.when||0)-(p.when||0));
+    host.innerHTML = events.length ? events.slice(0,40).map(e =>
+      `<div class="clock"><div class="cn">${e.label}${e.issues?' <span class="badge" style="background:var(--warn);color:#0a0c10">issues</span>':""}
+       ${e.who?`<div class="cd">${e.who}</div>`:""}</div><div class="cd">${fmtDate(e.when)}</div></div>`).join("")
+      + (events.length>40?`<div class="cd" style="padding-top:6px">…and ${events.length-40} older records</div>`:"")
+      : "No history on record";
+  } catch(err){ console.error(err); host.textContent = "History unavailable: " + (err.message||err); }
+}
 
 // tabs
 function setTab(t){
