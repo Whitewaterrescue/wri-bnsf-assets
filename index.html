@@ -46,7 +46,11 @@
   #detail h2{font-size:16px;line-height:1.25}
   #detail .x{margin-left:auto;background:none;border:none;color:var(--text-dim);font-size:22px;cursor:pointer;line-height:1}
   .sec{padding:10px 12px;border-bottom:1px solid var(--border)}
-  .sec h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px}
+  .sec h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px;cursor:pointer;user-select:none}
+  .sec h3::before{content:"▾ ";color:var(--accent)}
+  .sec.closed h3::before{content:"▸ "}
+  .sec.closed h3{margin-bottom:0}
+  .sec.closed > div{display:none}
   .kv{display:grid;grid-template-columns:130px 1fr;gap:3px 10px;font-size:13px}
   .kv .k{color:var(--text-dim)}
   .clock{display:flex;gap:8px;align-items:center;padding:6px 0;font-size:13px;border-bottom:1px dashed var(--border)}
@@ -130,8 +134,11 @@
     <button class="btn red" id="btnCount">Inventory Count</button>
     <button class="btn gray" id="btnIssue">Report Issue</button>
   </div>
+  <div class="btns" style="padding-top:0">
+    <button class="btn gray" id="btnPrep">Site Visit Prep Sheet (printable)</button>
+  </div>
   <div class="sec"><h3>Compliance clocks</h3><div id="dClocks"></div></div>
-  <div class="sec"><h3>History</h3><div id="dHist" style="font-size:13px;color:var(--text-dim)">Loading…</div></div>
+  <div class="sec closed" id="secHist"><h3>History</h3><div id="dHist" style="font-size:13px;color:var(--text-dim)">Loading…</div></div>
   <div class="sec"><h3>Identity</h3><div class="kv" id="dIdent"></div></div>
   <div class="sec"><h3>Equipment aboard</h3><div id="dEquip"></div></div>
   <div class="sec"><h3>Notes</h3><div id="dNotes" style="font-size:13px;color:var(--text-dim)">—</div></div>
@@ -165,6 +172,8 @@ const layers = {
   deploy: new FeatureLayer({url: SVC + "/10"}),
   insp:   new FeatureLayer({url: SVC + "/2"}),
   maint:  new FeatureLayer({url: SVC + "/7"}),
+  issues: new FeatureLayer({url: SVC + "/4"}),
+  baseline: new FeatureLayer({url: SVC + "/1"}),
 };
 
 async function qAll(lyr, outFields, geom){
@@ -364,6 +373,72 @@ function openSurvey(kind){
 $("btnInsp").onclick = () => openSurvey("insp");
 $("btnIssue").onclick = () => openSurvey("issue");
 $("btnCount").onclick = () => openSurvey("count");
+
+// collapsible detail sections
+document.querySelectorAll("#detail .sec h3").forEach(h =>
+  h.onclick = () => h.parentElement.classList.toggle("closed"));
+
+// ---- live printable prep sheet ----
+$("btnPrep").onclick = async () => {
+  const x = byId[selected]; if (!x) return;
+  const a = x.attrs;
+  const guid = String(a.GlobalID).replace(/[{}]/g,"");
+  $("btnPrep").textContent = "Building prep sheet…";
+  try {
+    const [issFs, baseFs] = await Promise.all([
+      layers.issues.queryFeatures({where:`asset_guid='{${guid}}' AND issue_status IN ('open','in_progress')`,
+        outFields:["issue_severity","issue_desc","parts_needed"], num:200}),
+      layers.baseline.queryFeatures({where:`asset_guid='{${guid}}'`,
+        outFields:["item_category","item_desc","item_code","expected_qty"],
+        orderByFields:["item_category","OBJECTID"], num:2000}),
+    ]);
+    const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const clockRows = x.clocks.map(c =>
+      `<tr><td><b style="color:${COLORS[c.sched_status]||'#666'}">${title(c.sched_status)}</b></td>
+       <td>${title(c.sched_type)}${c._via?" (on "+esc(c._via)+")":""}</td><td>${fmtDate(c.due_date)}</td>
+       <td>${c.sched_source==="derived"?"derived":""}</td></tr>`).join("");
+    const issRows = issFs.features.map(f => { const i=f.attributes;
+      return `<li><b>[${i.issue_severity}]</b> ${esc(i.issue_desc)}${i.parts_needed?" — <b>bring:</b> "+esc(i.parts_needed):""}</li>`;
+    }).join("") || "<li>No open issues on record.</li>";
+    let invRows = "", lastCat = null;
+    baseFs.features.forEach(f => { const b=f.attributes;
+      if (b.item_category !== lastCat){ invRows += `<tr class="sec"><td colspan="5">${esc(b.item_category||"Items")}</td></tr>`; lastCat=b.item_category; }
+      invRows += `<tr><td>${esc(b.item_desc)}</td><td>${esc(b.item_code)}</td><td style="text-align:center">${b.expected_qty??""}</td><td class="w"></td><td class="w"></td></tr>`;
+    });
+    const invSection = baseFs.features.length
+      ? `<h2>Expected inventory (${baseFs.features.length} line items — count against this)</h2>
+         <p class="note">Baseline: 2017 workbook, stale until first recount. Record counts in the Inventory Count survey; this sheet is the offline fallback.</p>
+         <table><tr><th>Item</th><th>Item #</th><th>Expected</th><th>Counted</th><th>Replace</th></tr>${invRows}</table>`
+      : `<h2>Expected inventory</h2><p class="note">No baseline on file for this asset yet — record what you find in the Inventory Count survey to establish one.</p>`;
+    const w = window.open("", "_blank");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Prep — ${esc(a.equipment_id)}</title><style>
+      body{font-family:Segoe UI,Arial,sans-serif;font-size:12.5px;color:#111;max-width:820px;margin:24px auto;padding:0 16px}
+      h1{font-size:20px;border-bottom:3px solid #cc0000;padding-bottom:6px} h1 small{color:#666;font-weight:400;font-size:13px}
+      h2{font-size:14px;margin:18px 0 6px;color:#cc0000;text-transform:uppercase;letter-spacing:.05em}
+      table{width:100%;border-collapse:collapse} td,th{border:1px solid #bbb;padding:4px 8px;text-align:left;font-size:12px}
+      th{background:#f2f2f2} tr.sec td{background:#e8e8e8;font-weight:700} td.w{width:70px;background:#fafafa}
+      .grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 18px} .grid div b{color:#555}
+      .note{color:#666;font-style:italic;margin:4px 0}
+      .noprint{margin:12px 0} @media print{.noprint{display:none} body{margin:6px}}
+      </style></head><body>
+      <div class="noprint"><button onclick="window.print()" style="padding:10px 22px;background:#cc0000;color:#fff;border:none;border-radius:6px;font-weight:700;font-size:14px;cursor:pointer">Print</button></div>
+      <h1>Site Visit Prep — ${esc(a.equipment_id)} <small>generated ${new Date().toLocaleDateString()} · WRI BNSF Asset Readiness</small></h1>
+      <div class="grid">
+        <div><b>Asset:</b> ${esc(a.asset_name)}</div><div><b>Type:</b> ${title(a.asset_type)}</div>
+        <div><b>Warehouse:</b> ${esc(a.current_warehouse)}</div><div><b>Address:</b> ${esc(a.staging_desc)}</div>
+        <div><b>Hazmat Mgr:</b> ${esc(a.hazmat_manager)}</div><div><b>Contractor:</b> ${esc(a.contractor_name)||"—"}</div>
+        <div><b>VIN:</b> ${esc(a.vin)||"—"}</div><div><b>Plate:</b> ${esc(a.plate_number)||"—"} ${esc(a.plate_state)}</div>
+        <div><b>Lock code:</b> ${esc(a.lock_code)||"______"}</div><div><b>Tires:</b> mfg ${a.tire_mfg_year||"—"}</div>
+      </div>
+      <h2>Clocks this visit can close</h2>
+      <table><tr><th>Status</th><th>Clock</th><th>Due</th><th></th></tr>${clockRows||"<tr><td colspan=4>None on record</td></tr>"}</table>
+      <h2>Bring list — open issues</h2><ul>${issRows}</ul>
+      ${invSection}
+      </body></html>`);
+    w.document.close();
+  } catch(e){ console.error(e); toast("Prep sheet failed: " + (e.message||e)); }
+  $("btnPrep").textContent = "Site Visit Prep Sheet (printable)";
+};
 window.openMaint = (kind, equipGuid, equipId) => {
   window.open(`https://survey123.arcgis.com/share/${SURVEYS[kind]}?` +
     `field:equip_guid=${encodeURIComponent("{"+String(equipGuid).replace(/[{}]/g,"")+"}")}` +
