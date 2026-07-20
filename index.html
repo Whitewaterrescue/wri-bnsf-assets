@@ -161,6 +161,9 @@
   <div class="btns" style="padding-top:0">
     <button class="btn gray" id="btnPrep">Site Visit Prep Sheet (printable)</button>
   </div>
+  <div class="btns" style="padding-top:0">
+    <button class="btn gray" id="btnInstr">Inspection &amp; Maintenance Instructions</button>
+  </div>
   <div class="sec"><h3>Compliance clocks</h3><div id="dClocks"></div></div>
   <div class="sec closed" id="secHist"><h3>History</h3><div id="dHist" style="font-size:13px;color:var(--text-dim)">Loading…</div></div>
   <div class="sec"><h3>Identity</h3><div class="kv" id="dIdent"></div></div>
@@ -189,6 +192,28 @@ const REGION_LABEL = {
   "Paul Hester":"Hester · ND/MB/MN/WI", "Derek Lampkin":"Lampkin · SD/NE/KS/IA",
   "Mike Sheehan":"Sheehan · MO/AR/IL/KY/TN/AL", "Travis Hudson":"Hudson · TX/OK/LA/MS",
 };
+// Region hues from the BNSF Hazmat Region Map (rev 05.01.26)
+const REGION_COLORS = {
+  "Justin Piper":"#7fa7d4", "James Farner":"#adc687", "Jeff Hankins":"#b3b3b3",
+  "Peter Killman":"#a08cc8", "Paul Hester":"#a8846c", "Derek Lampkin":"#f0993e",
+  "Mike Sheehan":"#e3cf58", "Travis Hudson":"#d98b93",
+};
+// Manager contacts from the same map (cell = mobile)
+const REGION_CONTACT = {
+  "Justin Piper":{email:"justin.piper@bnsf.com", cell:"360-553-8672"},
+  "James Farner":{email:"james.farner@bnsf.com", cell:"909-267-5167"},
+  "Jeff Hankins":{email:"jeffrey.hankins2@bnsf.com", cell:"505-218-3582"},
+  "Peter Killman":{email:"peter.killman@bnsf.com", cell:"785-214-3248"},
+  "Paul Hester":{email:"paul.hester@bnsf.com", cell:"612-619-8641"},
+  "Derek Lampkin":{email:"derek.lampkin@bnsf.com", cell:"612-760-1365"},
+  "Mike Sheehan":{email:"michael.sheehan@bnsf.com", cell:"509-430-6090"},
+  "Travis Hudson":{email:"travis.hudson@bnsf.com", cell:"832-835-7397"},
+};
+const STATE_REGION = {};
+[["Justin Piper","WA OR ID"], ["James Farner","CA NV AZ"], ["Jeff Hankins","NM CO UT"],
+ ["Peter Killman","MT WY"], ["Paul Hester","ND MN WI"], ["Derek Lampkin","SD NE KS IA"],
+ ["Mike Sheehan","MO AR IL KY TN AL"], ["Travis Hudson","TX OK LA MS"]
+].forEach(([m, sts]) => sts.split(" ").forEach(s => STATE_REGION[s] = m));
 
 const $ = id => document.getElementById(id);
 const toast = m => { const t=$("toast"); t.textContent=m; t.style.display="block"; setTimeout(()=>t.style.display="none", 3200); };
@@ -257,8 +282,24 @@ async function boot(){
   byId = Object.fromEntries(assets.map(x => [x.attrs.equipment_id, x]));
 
   gLayer = new GraphicsLayer();
+  // Region tint under the status dots (US states only; colors from the BNSF map)
+  let regionLayer = null;
+  try {
+    const hex2rgba = (h, a) => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16), a];
+    regionLayer = new FeatureLayer({
+      url: "https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/USA_States_Generalized_Boundaries/FeatureServer/0",
+      definitionExpression: `STATE_ABBR IN (${Object.keys(STATE_REGION).map(s=>`'${s}'`).join(",")})`,
+      popupEnabled: false, legendEnabled: false,
+      renderer: {type:"unique-value", field:"STATE_ABBR",
+        uniqueValueInfos: Object.entries(STATE_REGION).map(([st, mgr]) => ({
+          value: st,
+          symbol: {type:"simple-fill", color: hex2rgba(REGION_COLORS[mgr], 0.22),
+                   outline: {color:[255,255,255,0.12], width:0.5}}}))}
+    });
+  } catch(e){ console.warn("region overlay unavailable", e); }
   view = new MapView({
-    container:"mapDiv", map:new Map({basemap:"dark-gray-vector", layers:[gLayer]}),
+    container:"mapDiv", map:new Map({basemap:"dark-gray-vector",
+      layers: regionLayer ? [regionLayer, gLayer] : [gLayer]}),
     center:[-105,44], zoom:4, popupEnabled:false,
     ui:{components:["zoom"]}
   });
@@ -272,6 +313,7 @@ async function boot(){
 
   buildFilters();
   renderList(currentListItems());
+  setTab("stats");   // land on the dashboard; Assets tab holds the list
   $("loader").style.display = "none";
 
   // QR / deep link: ?asset=<equipment_id> opens that asset directly
@@ -290,11 +332,15 @@ const FILTER_DEFS = [
   ["asset_category", "Category"],
 ];
 const filterState = {};
+// Per client 2026-07-20: legacy responders stay on assets but out of the filter
+const FILTER_EXCLUDE = {contractor_name: new Set(["EWI",
+  "PRAIRIE DU CHIEN FIRE DEPARTMENT", "SOUTH BOUNDARY FIRE PROTECTION DISTRICT"])};
 function buildFilters(){
   const host = $("filters");
   host.innerHTML = "";
   FILTER_DEFS.forEach(([field, label, disp]) => {
-    const vals = [...new Set(assets.map(x => x.attrs[field]).filter(Boolean))].sort();
+    let vals = [...new Set(assets.map(x => x.attrs[field]).filter(Boolean))].sort();
+    if (FILTER_EXCLUDE[field]) vals = vals.filter(v => !FILTER_EXCLUDE[field].has(v));
     if (!vals.length) return;  // e.g. hazmat_manager appears once data exists
     const sel = document.createElement("select");
     sel.id = "flt_" + field;
@@ -353,7 +399,12 @@ function select(eid, zoom){
      <div class="cn">${title(c.sched_type)}${c._via?`<div class="cd">on ${c._via}</div>`:""}
      ${c.sched_source==="derived"?`<div class="cd">derived date</div>`:""}</div>
      <div class="cd">due ${fmtDate(c.due_date)}</div></div>`).join("") : "<div style='color:var(--text-muted);font-size:13px'>No clocks on record</div>";
-  const kv = [["Name",a.asset_name],["Status",title(a.asset_status)],["Warehouse",a.current_warehouse],
+  const mgr = a.hazmat_manager, mc = REGION_CONTACT[mgr];
+  const regionRow = mgr ? `<span class="dot" style="background:${REGION_COLORS[mgr]||"#666"};display:inline-block;margin-right:5px"></span>${REGION_LABEL[mgr]||mgr}` : null;
+  const mgrRow = mc ? `${mgr} · <a href="tel:${mc.cell}" style="color:var(--deployed)">${mc.cell}</a> · <a href="mailto:${mc.email}" style="color:var(--deployed)">email</a>` : null;
+  const kv = [["Name",a.asset_name],["Status",title(a.asset_status)],
+    ["Region",regionRow],["Hazmat mgr",mgrRow],["Contractor",a.contractor_name],
+    ["Warehouse",a.current_warehouse],
     ["Base",a.base_warehouse],["Address",a.staging_desc],["WRI region",a.wri_region],
     ["VIN",a.vin],["Plate",[a.plate_number,a.plate_state].filter(Boolean).join(" ")],
     ["Tire year",a.tire_mfg_year],["GPS #",a.gps_tracking_num],["Holman",a.holman_no]];
@@ -404,14 +455,18 @@ $("btnDir").onclick = () => {
 const SURVEYS = {insp:"c60619b46937485898ddd9cf5ee86d2b", issue:"c2d99f06372747fdb62d5aea7478c93c",
                  count:"97229a03495f4f8dbe2986359314e5e6",
                  gen:"10a014d20f4a41948aff33c5aec54a52", hpp:"bbec8795f1c9476fa8e6d34aeb843ba8"};
+// Per-asset tailored forms (pre-surfaced expected inventory) override the generic ones
+const ASSET_SURVEYS = {"TRL-OS-M2-023": {count:"6efa95ecee9a4053a13205c4d64c3c3f"}};
 function openSurvey(kind){
   const x = byId[selected]; if (!x) return;
   const a = x.attrs;
   const guid = String(a.GlobalID||"").replace(/[{}]/g,"");
-  window.open(`https://survey123.arcgis.com/share/${SURVEYS[kind]}?` +
+  const form = (ASSET_SURVEYS[a.equipment_id] || {})[kind] || SURVEYS[kind];
+  window.open(`https://survey123.arcgis.com/share/${form}?` +
     `field:asset_guid=${encodeURIComponent("{"+guid+"}")}` +
     `&field:asset_equipment_id=${encodeURIComponent(a.equipment_id)}`, "_blank");
 }
+$("btnInstr").onclick = () => window.open("instructions.html", "_blank");
 $("btnInsp").onclick = () => openSurvey("insp");
 $("btnIssue").onclick = () => openSurvey("issue");
 $("btnCount").onclick = () => openSurvey("count");
@@ -568,7 +623,7 @@ function buildStats(){
       `<div class="seg" data-r="${r}" data-lbl="${lbl}" data-n="${g[k]}"
         style="width:${(g[k] / maxTotal * 100).toFixed(2)}%;background:${COLORS[k]};
         ${i === segs.length - 1 ? "border-radius:0 4px 4px 0" : ""}"></div>`).join("");
-    return `<div class="rrow"><div class="rl"><span>${REGION_LABEL[r] || r}</span><b>${g.total}</b></div>
+    return `<div class="rrow"><div class="rl"><span><span class="dot" style="background:${REGION_COLORS[r]||"#666"};display:inline-block;margin-right:5px"></span>${REGION_LABEL[r] || r}</span><b>${g.total}</b></div>
             <div class="rbar">${bars || ""}</div></div>`;
   }).join("");
 
@@ -584,7 +639,8 @@ function buildStats(){
     <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px">Status by region</div>
     <div class="legend">${SEGS.map(([k,l]) => `<span><span class="dot" style="background:${COLORS[k]}"></span>${l}</span>`).join("")}</div>
     <div class="rchart">${rows}</div>
-    <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Worst clock per asset · statuses recomputed nightly · tap a bar to filter the list</div>`;
+    <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Worst clock per asset · statuses recomputed nightly · tap a bar to filter the list</div>
+    <div style="margin-top:12px"><a href="instructions.html" target="_blank" style="color:var(--deployed);font-size:12.5px;font-weight:600">Inspection &amp; maintenance instructions →</a></div>`;
 
   const tip = $("chartTip");
   $("statsPanel").querySelectorAll(".seg").forEach(s => {

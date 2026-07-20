@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BNSF Trailer Inspection &amp; Maintenance Instructions</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{--bg:#0a0c10;--surface:#111827;--surface-alt:#1a2234;--accent:#cc0000;
+        --text:#e5e7eb;--text-dim:#9ca3af;--text-muted:#6b7280;--border:#2a2f3a;--warn:#f59e0b}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,system-ui,'Segoe UI',Roboto,sans-serif;
+       font-size:15px;line-height:1.5;padding-bottom:60px}
+  header{position:sticky;top:0;background:var(--surface);border-bottom:2px solid var(--accent);
+         padding:10px 14px;z-index:10}
+  header h1{font-size:16px}
+  header .sub{font-size:11.5px;color:var(--text-dim)}
+  nav{display:flex;gap:8px;flex-wrap:wrap;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--border)}
+  nav a{color:var(--text-dim);font-size:12.5px;font-weight:600;text-decoration:none;
+        border:1px solid var(--border);border-radius:14px;padding:4px 10px}
+  nav a:active,nav a:hover{color:var(--text);border-color:var(--accent)}
+  main{max-width:860px;margin:0 auto;padding:14px}
+  h2{font-size:15px;color:#fff;background:var(--accent);padding:6px 12px;border-radius:6px;
+     margin:26px 0 10px;scroll-margin-top:110px}
+  h3{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--warn);margin:18px 0 6px}
+  p{margin:8px 0;color:var(--text-dim)}
+  ul{margin:8px 0 8px 22px;color:var(--text-dim)}
+  li{margin:4px 0}
+  b,strong{color:var(--text)}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:10px 0}
+  table{width:100%;border-collapse:collapse;margin:8px 0;font-size:13px}
+  th,td{border:1px solid var(--border);padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:var(--surface-alt);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-dim)}
+  td.task{font-weight:700;white-space:nowrap}
+  .codes span{display:inline-block;background:var(--surface-alt);border:1px solid var(--border);
+              border-radius:6px;padding:2px 8px;margin:2px 4px 2px 0;font-size:12.5px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px}
+  @media(max-width:640px){.grid2{grid-template-columns:1fr} td.task{white-space:normal}}
+  .note{font-size:12px;color:var(--text-muted);font-style:italic}
+  @media print{
+    :root{--bg:#fff;--surface:#fff;--surface-alt:#f2f2f2;--text:#111;--text-dim:#333;--text-muted:#666;--border:#bbb}
+    header,nav{position:static} h2{color:#cc0000;background:none;padding:6px 0;border-bottom:2px solid #cc0000;border-radius:0}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Trailer Inspection &amp; Maintenance Instructions</h1>
+  <div class="sub">BNSF Asset Readiness · from the BNSF Trailer Inspections workbook</div>
+</header>
+<nav>
+  <a href="#prep">Before you go</a>
+  <a href="#inspection">Trailer inspection</a>
+  <a href="#generator">Generator</a>
+  <a href="#hpp">Power pack</a>
+  <a href="#kubota">Kubota</a>
+  <a href="#yanmar">Yanmar</a>
+</nav>
+<main>
+
+<h2 id="prep">Before you go</h2>
+<div class="card">
+<ul>
+  <li><b>Confirm the actual location</b> of the trailer with the mobilization contact person.</li>
+  <li><b>Know the combination lock code or key type</b> for the trailer (coordinate with the mobilization contact; the code is on the asset's page in this app and on its printed prep sheet).</li>
+  <li><b>Bring tools:</b> tire pressure gauge, lug nut wrench, camera/phone.</li>
+  <li><b>For maintenance visits also bring materials:</b> filters, engine oil, compressed air, waste-oil container, absorbent pads.</li>
+  <li>Open the asset in the viewer and print the <b>Site Visit Prep Sheet</b> — it lists the clocks you can close, open issues (bring list), and the expected inventory.</li>
+</ul>
+</div>
+
+<h2 id="inspection">Trailer condition inspection</h2>
+<p>Record results in the <b>DOT / Condition survey</b> (launched from the asset's page).
+Walk the trailer and mark each item <b>OK</b>, <b>Needs Repair</b>, or <b>N/A</b>.
+Mark all exterior damage found and photograph it. Use the notes field for anything else of interest.</p>
+<div class="card">
+  <b>Damage type codes</b>
+  <div class="codes">
+    <span><b>B</b> — Bruise</span><span><b>C</b> — Cut</span><span><b>H</b> — Hole</span>
+    <span><b>D</b> — Dent</span><span><b>M</b> — Missing</span>
+  </div>
+</div>
+<h3>Checklist items</h3>
+<div class="card grid2">
+  <div>Stop, turn and tail lights</div><div>Rear bumper</div>
+  <div>Side door</div><div>Rear door</div>
+  <div>Ramp door</div><div>Pull-out step</div>
+  <div>Tire wear or uneven tread</div><div>Tire bulges, cuts or cracks</div>
+  <div>Tire pressure</div><div>Tire valves</div>
+  <div>Lug nut tightness and condition</div><div>Wheel well</div>
+  <div>Spare tire</div><div>Tongue</div>
+  <div>Safety chains</div><div>Electrical wiring connector</div>
+  <div>Breakaway braking device</div><div>Roof vent(s) and dome light(s)</div>
+  <div>Leaf springs</div><div>Spring hangers / U-bolts</div>
+  <div>Stone guard</div><div>D-rings</div>
+  <div>Trailer jack</div><div>Interior moisture / condensation</div>
+</div>
+<p class="note">Also verify the trailer identity: VIN, plate and tab expiration, ball size, and record tire DOT date codes.</p>
+
+<h2 id="generator">Generator — Honda EB3000c annual maintenance</h2>
+<p>Record hour-meter reading first; several items are operating-interval specific.
+Log results in the <b>Generator Maintenance survey</b> (from the equipment list on the asset's page).</p>
+<table>
+<tr><th>Task</th><th>Instructions</th><th>Manual ref</th><th>Materials</th></tr>
+<tr><td class="task">Engine oil</td><td>Check level, top off if low. Change oil at 100-hour intervals.</td><td>p. 38</td><td>0.58 US qt (0.55 L) 10W-30</td></tr>
+<tr><td class="task">Air filter — foam</td><td>Remove air cleaner cover; wash foam filter in detergent and warm water, rinse, dry fully before replacing.</td><td>p. 39-40</td><td></td></tr>
+<tr><td class="task">Air filter — paper</td><td>Replace paper element.</td><td>p. 40</td><td></td></tr>
+<tr><td class="task">Sediment cup</td><td>Unscrew sediment cup; clean cup and filter.</td><td>p. 43</td><td></td></tr>
+<tr><td class="task">Spark plug</td><td>Remove cap, clean plug base of dirt. Replace plug if necessary.</td><td>p. 41-42</td><td>BPR6ES (NGK) / W20EPR-U (DENSO)</td></tr>
+<tr><td class="task">Spark arrestor</td><td>Remove from muffler; brush carbon off screen; inspect for breaks or tears, replace if needed.</td><td>p. 44</td><td></td></tr>
+<tr><td class="task">Fuel</td><td>Drain fuel tank; refill with fresh gasoline plus stabilizer.</td><td>p. 45, 47</td><td>Gasoline (2.56 gal) + stabilizer</td></tr>
+<tr><td class="task">Battery</td><td>Charge to 80% or greater voltage capacity.</td><td>—</td><td></td></tr>
+<tr><td class="task">Storage prep</td><td>Turn fuel valve OFF; disconnect battery cables.</td><td>—</td><td></td></tr>
+</table>
+
+<h2 id="hpp">D10 Hydraulic Power Pack — all units</h2>
+<table>
+<tr><th>Task</th><th>Instructions</th><th>Manual ref</th></tr>
+<tr><td class="task">Hydraulic oil &amp; filter</td><td>Check level, top off if low. Change oil and filter at 300-hour intervals.</td><td>p. 9</td></tr>
+<tr><td class="task">Suction strainers</td><td>Remove and clean hydraulic suction strainers at 600-hour intervals.</td><td>—</td></tr>
+</table>
+<p>Then complete the engine-specific list below — the engine type (<b>Kubota</b> or <b>Yanmar</b>) is stamped on the block, and the <b>HPP Maintenance survey</b> switches task lists automatically.</p>
+
+<h2 id="kubota">HPP engine — Kubota</h2>
+<table>
+<tr><th>Task</th><th>Instructions</th><th>Manual ref</th><th>Materials</th></tr>
+<tr><td class="task">Fuel pipes &amp; clamps</td><td>Inspect pipes and clamp bands for cracking; tighten loose bands; replace as needed.</td><td>p. 12</td><td></td></tr>
+<tr><td class="task">Engine oil</td><td>Check level, top off if low. Change oil at 100-hour intervals.</td><td>p. 13-14</td><td>10W-30, API CD grade or higher</td></tr>
+<tr><td class="task">Oil cartridge</td><td>Replace at 200-hour intervals.</td><td>p. 15</td><td></td></tr>
+<tr><td class="task">Air cleaner</td><td>Clean element with compressed gas.</td><td>p. 18</td><td></td></tr>
+<tr><td class="task">Fuel filter / injection pump</td><td>Rinse inside with diesel fuel and reinstall; keep filter clear of dust. Air-bleed the injection pump. Replace filter at 400-hour intervals.</td><td>—</td><td></td></tr>
+<tr><td class="task">Battery electrolyte</td><td>Verify electrolyte reaches the bottom of the vent walls.</td><td>p. 19</td><td></td></tr>
+<tr><td class="task">Fan belt</td><td>Press thumb between pulleys — should deflect 7–9 mm (0.28–0.35 in). Replace belt at 500-hour intervals.</td><td>p. 20</td><td></td></tr>
+<tr><td class="task">Radiator hoses &amp; clamps</td><td>Inspect pipes and clamp bands for cracking; tighten loose bands.</td><td>p. 16</td><td></td></tr>
+<tr><td class="task">Radiator coolant</td><td>Check level, top off if low. Replace biennially.</td><td>p. 15</td><td>Summer: water + radiator cleaner · Winter: 40–50% antifreeze</td></tr>
+<tr><td class="task">Fuel</td><td>Drain tank; refill with fresh diesel plus stabilizer.</td><td>p. 11</td><td>Diesel + stabilizer</td></tr>
+<tr><td class="task">Fuel tank</td><td>Drain and clean tank at 200-hour intervals.</td><td>—</td><td></td></tr>
+<tr><td class="task">Battery</td><td>Charge to 80% or greater voltage capacity.</td><td>p. 19</td><td></td></tr>
+<tr><td class="task">Storage prep</td><td>Disconnect battery cables.</td><td>p. 21</td><td></td></tr>
+</table>
+
+<h2 id="yanmar">HPP engine — Yanmar</h2>
+<table>
+<tr><th>Task</th><th>Instructions</th><th>Manual ref</th><th>Materials</th></tr>
+<tr><td class="task">Air intake</td><td>Clean or replace at 500-hour intervals.</td><td>p. 54</td><td>114250-12581 (L48V) · 114210-12590 (L70V &amp; L100V)</td></tr>
+<tr><td class="task">Engine oil</td><td>Check level, top off if low. Change oil at 200-hour intervals.</td><td>p. 25, 51-52</td><td>10W-30, API CD grade or higher</td></tr>
+<tr><td class="task">Engine oil filter</td><td>Clean or replace at 400-hour intervals.</td><td>p. 42</td><td>114250-35070 · 114299-35110</td></tr>
+<tr><td class="task">Fuel</td><td>Drain tank; refill with fresh diesel plus stabilizer.</td><td>p. 55-56</td><td>Diesel + stabilizer</td></tr>
+<tr><td class="task">Fuel tank</td><td>Drain and clean tank at 200-hour intervals.</td><td>p. 55-56</td><td></td></tr>
+<tr><td class="task">Battery electrolyte</td><td>Verify electrolyte reaches the bottom of the vent walls.</td><td>p. 45</td><td></td></tr>
+<tr><td class="task">Battery</td><td>Charge to 80% or greater voltage capacity.</td><td>—</td><td></td></tr>
+<tr><td class="task">Storage prep</td><td>Disconnect battery cables.</td><td>p. 63-65</td><td></td></tr>
+</table>
+
+<p class="note" style="margin-top:24px">Source: BNSF Trailer Inspections workbook (Inspection Form / Maintenance Form).
+Task lists match the Survey123 maintenance forms — this page is the "why and how," the survey is the record.</p>
+</main>
+</body>
+</html>
