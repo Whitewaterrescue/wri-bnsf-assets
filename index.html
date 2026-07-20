@@ -481,6 +481,12 @@ document.querySelectorAll("#detail .sec h3").forEach(h =>
   h.onclick = () => h.parentElement.classList.toggle("closed"));
 
 // ---- live printable prep sheet ----
+// 24-item condition checklist (2017 workbook Inspection Form; matches the DOT/Condition survey)
+const COND_ITEMS = ["Stop, turn and tail lights","Rear bumper","Side door","Rear door","Ramp door",
+  "Pull-out step","Tire wear or uneven tread","Tire bulges, cuts or cracks","Tire pressure","Tire valves",
+  "Lug nut tightness and condition","Wheel well","Spare tire","Tongue","Safety chains",
+  "Electrical wiring connector","Breakaway braking device","Roof vent(s) and dome light(s)","Leaf springs",
+  "Spring hangers / U-bolts","Stone guard","D-rings","Trailer jack","Interior moisture / condensation"];
 $("btnPrep").onclick = async () => {
   const x = byId[selected]; if (!x) return;
   const a = x.attrs;
@@ -519,6 +525,7 @@ $("btnPrep").onclick = async () => {
       h2{font-size:14px;margin:18px 0 6px;color:#ee6e01;text-transform:uppercase;letter-spacing:.05em}
       table{width:100%;border-collapse:collapse} td,th{border:1px solid #bbb;padding:4px 8px;text-align:left;font-size:12px}
       th{background:#f2f2f2} tr.sec td{background:#e8e8e8;font-weight:700} td.w{width:70px;background:#fafafa}
+      .cklist{columns:2;font-size:12px;column-gap:24px} .cklist div{padding:1.5px 0;break-inside:avoid}
       .grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 18px} .grid div b{color:#555}
       .note{color:#666;font-style:italic;margin:4px 0}
       .noprint{margin:12px 0} @media print{.noprint{display:none} body{margin:6px}}
@@ -534,6 +541,17 @@ $("btnPrep").onclick = async () => {
       </div>
       <h2>Clocks this visit can close</h2>
       <table><tr><th>Status</th><th>Clock</th><th>Due</th><th></th></tr>${clockRows||"<tr><td colspan=4>None on record</td></tr>"}</table>
+      <h2>Inspection instructions</h2>
+      <p class="note"><b>Before you go:</b> confirm the trailer's actual location with the mobilization contact
+      · know the lock code / key type (identity block above)
+      · bring tire pressure gauge, lug nut wrench, camera; for maintenance visits also filters, engine oil,
+      compressed air, waste-oil container, absorbent pads.</p>
+      <p style="font-size:12px"><b>Damage codes</b> (mark all exterior damage + photograph):
+      <b>B</b> Bruise · <b>C</b> Cut · <b>H</b> Hole · <b>D</b> Dent · <b>M</b> Missing</p>
+      <p style="font-size:12px"><b>Condition checklist</b> — mark each OK / Needs Repair / N/A in the DOT-Condition survey:</p>
+      <div class="cklist">${COND_ITEMS.map(i=>`<div>&#9744; ${i}</div>`).join("")}</div>
+      <p class="note">Full procedures (generator, power pack, Kubota/Yanmar task lists, manual page refs):
+      https://whitewaterrescue.github.io/wri-bnsf-assets/instructions.html</p>
       <h2>Bring list — open issues</h2><ul>${issRows}</ul>
       ${invSection}
       </body></html>`);
