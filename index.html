@@ -264,7 +264,7 @@ const title = s => (s||"").replace(/_/g," ").replace(/\b\w/g, c=>c.toUpperCase()
 
 esriId.registerOAuthInfos([new OAuthInfo({appId:"4Fi59bD09H8vlidE", portalUrl:PORTAL, popup:false})]);
 
-let assets = [], byId = {}, selected = null, view, gLayer, nearMode = false, nearPt = null;
+let assets = [], byId = {}, byGuid = {}, selected = null, view, gLayer, nearMode = false, nearPt = null;
 const layers = {
   assets: new FeatureLayer({url: SVC + "/0"}),
   sched:  new FeatureLayer({url: SVC + "/11"}),
@@ -323,6 +323,8 @@ async function boot(){
   assets.sort((x,y) => (SEVERITY[x.worst?.sched_status]??9)-(SEVERITY[y.worst?.sched_status]??9)
                      || (x.worst?.due_date||9e15)-(y.worst?.due_date||9e15));
   byId = Object.fromEntries(assets.map(x => [x.attrs.equipment_id, x]));
+  byGuid = Object.fromEntries(assets.map(x =>
+    [String(x.attrs.GlobalID || "").replace(/[{}]/g, "").toLowerCase(), x]));
 
   gLayer = new GraphicsLayer();
   // Region tint under the status dots (US states only; colors from the BNSF map)
@@ -461,9 +463,9 @@ function select(eid, zoom){
     return `<div class="eq"><b>${e.equip_id}</b>${btn}<div class="et">${title(e.equip_type)}${e.serial_num?" · SN "+e.serial_num:""}</div></div>`;
   }).join("") : "<div style='color:var(--text-muted);font-size:13px'>None linked (see parent-inference review)</div>";
   $("dAuditMaint").innerHTML = x.equip.map(e =>
-    `<button class="btn gray" style="width:100%;margin-top:8px;text-align:left"
+    `<button class="btn red" style="width:100%;margin-top:8px;text-align:left"
       onclick="openMaint('${maintKind(e.equip_type)}','${String(e.GlobalID).replace(/[{}]/g,"")}','${(e.equip_id||"").replace(/'/g,"")}')">
-      Maintenance — ${e.equip_id} <span style="color:var(--text-dim);font-weight:400">(${title(e.equip_type)})</span></button>`).join("");
+      Maintenance — ${e.equip_id} <span style="color:rgba(255,255,255,.8);font-weight:400">(${title(e.equip_type)})</span></button>`).join("");
   $("dNotes").textContent = a.asset_notes || "—";
   $("btnMob").textContent = a.asset_status === "deployed" ? "Return from incident" : "Mobilize";
   $("btnMob").className = "btn " + (a.asset_status === "deployed" ? "red" : "blue");
@@ -758,16 +760,22 @@ $("tabNear").onclick = () => setTab("near");
 $("mapTab").onclick = () => hidePanel();
 
 // ---- Stats tab (tiles + status-by-region bars; counts from already-loaded data) ----
-let openIssueCount = null;
+let openIssueGuids = null, statsRegion = null;
 function buildStats(){
+  const regionOf = x => x.attrs.hazmat_manager || "Unassigned";
   const worstOf = x => { const s = x.worst ? x.worst.sched_status : "none";
                          return (s in COLORS && s !== "deployed") ? s : "none"; };
+  // tiles reflect the drilled region; bars stay fleet-wide with the pick highlighted
+  const scope = statsRegion ? assets.filter(x => regionOf(x) === statsRegion) : assets;
   const c = {overdue:0, due_soon:0, current:0, none:0, deployed:0};
-  assets.forEach(x => { c[worstOf(x)]++; if (x.attrs.asset_status === "deployed") c.deployed++; });
+  scope.forEach(x => { c[worstOf(x)]++; if (x.attrs.asset_status === "deployed") c.deployed++; });
+  const issueN = !Array.isArray(openIssueGuids) ? "…"
+    : openIssueGuids.filter(g => { const x = byGuid[g];
+        return x && (!statsRegion || regionOf(x) === statsRegion); }).length;
 
   const regions = {};
   assets.forEach(x => {
-    const r = x.attrs.hazmat_manager || "Unassigned";
+    const r = regionOf(x);
     const g = regions[r] = regions[r] || {overdue:0, due_soon:0, current:0, none:0, total:0};
     g[worstOf(x)]++; g.total++;
   });
@@ -786,48 +794,66 @@ function buildStats(){
       `<div class="seg" data-r="${r}" data-lbl="${lbl}" data-n="${g[k]}"
         style="width:${(g[k] / maxTotal * 100).toFixed(2)}%;background:${COLORS[k]};
         ${i === segs.length - 1 ? "border-radius:0 4px 4px 0" : ""}"></div>`).join("");
-    return `<div class="rrow"><div class="rl"><span><span class="dot" style="background:${REGION_COLORS[r]||"#666"};display:inline-block;margin-right:5px"></span>${REGION_LABEL[r] || r}</span><b>${g.total}</b></div>
+    return `<div class="rrow" data-r="${r}" style="cursor:pointer;opacity:${statsRegion && statsRegion !== r ? ".4" : "1"}">
+            <div class="rl"><span><span class="dot" style="background:${REGION_COLORS[r]||"#666"};display:inline-block;margin-right:5px"></span>${REGION_LABEL[r] || r}</span><b>${g.total}</b></div>
             <div class="rbar">${bars || ""}</div></div>`;
   }).join("");
 
+  const chip = statsRegion
+    ? `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:10px;font-size:12.5px">
+        <span><span class="dot" style="background:${REGION_COLORS[statsRegion]||"#666"};display:inline-block;margin-right:5px"></span><b>${REGION_LABEL[statsRegion] || statsRegion}</b></span>
+        <a href="#" id="statsClear" style="color:var(--deployed);font-weight:600">Show all regions</a>
+        <a href="#" id="statsToList" style="color:var(--deployed);font-weight:600">Open in Assets list →</a></div>`
+    : "";
+
   $("statsPanel").innerHTML =
-    `<div class="tiles">
-      ${tile("Assets tracked", assets.length, "var(--text-muted)")}
+    `${chip}<div class="tiles">
+      ${tile(statsRegion ? "Assets in region" : "Assets tracked", scope.length, "var(--text-muted)")}
       ${tile("Deployed to incident", c.deployed, COLORS.deployed)}
       ${tile("Service overdue", c.overdue, COLORS.overdue)}
       ${tile("Due ≤ 90 days", c.due_soon, COLORS.due_soon)}
       ${tile("Current", c.current, COLORS.current)}
-      ${tile("Open issues", openIssueCount ?? "…", "var(--warn)")}
+      ${tile("Open issues", issueN, "var(--warn)")}
     </div>
     <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px">Status by region</div>
     <div class="legend">${SEGS.map(([k,l]) => `<span><span class="dot" style="background:${COLORS[k]}"></span>${l}</span>`).join("")}</div>
     <div class="rchart">${rows}</div>
-    <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Worst clock per asset · statuses recomputed nightly · tap a bar to filter the list</div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Worst clock per asset · statuses recomputed nightly · tap a region to drill into its stats</div>
     <div style="margin-top:12px"><a href="#" id="statsInstr" style="color:var(--deployed);font-size:12.5px;font-weight:600">Inspection &amp; maintenance instructions →</a></div>`;
 
   $("statsInstr").onclick = e => { e.preventDefault();
     openOverlay("Inspection & Maintenance Instructions", {url:"instructions.html"}); };
+  if (statsRegion){
+    $("statsClear").onclick = e => { e.preventDefault(); statsRegion = null; buildStats(); };
+    $("statsToList").onclick = e => { e.preventDefault();
+      const sel = $("flt_hazmat_manager");
+      const val = statsRegion === "Unassigned" ? "" : statsRegion;
+      filterState.hazmat_manager = val || null;
+      if (sel){ sel.value = val; sel.classList.toggle("on", !!val); }
+      setTab("list"); renderList(currentListItems());
+    };
+  }
   const tip = $("chartTip");
   $("statsPanel").querySelectorAll(".seg").forEach(s => {
     s.onmousemove = e => { tip.style.display = "block"; tip.style.left = (e.clientX + 12) + "px";
       tip.style.top = (e.clientY + 12) + "px";
       tip.textContent = `${s.dataset.lbl}: ${s.dataset.n} — ${REGION_LABEL[s.dataset.r] || s.dataset.r}`; };
     s.onmouseleave = () => tip.style.display = "none";
-    s.onclick = () => {
-      tip.style.display = "none";
-      const sel = $("flt_hazmat_manager");
-      const val = s.dataset.r === "Unassigned" ? "" : s.dataset.r;
-      filterState.hazmat_manager = val || null;
-      if (sel){ sel.value = val; sel.classList.toggle("on", !!val); }
-      setTab("list"); renderList(currentListItems());
+  });
+  $("statsPanel").querySelectorAll(".rrow").forEach(r => {
+    r.onclick = () => { tip.style.display = "none";
+      statsRegion = statsRegion === r.dataset.r ? null : r.dataset.r;
+      buildStats();
     };
   });
 
-  if (openIssueCount === null){
-    openIssueCount = "…";
-    layers.issues.queryFeatureCount({where:"issue_status IN ('open','in_progress')"})
-      .then(n => { openIssueCount = n; })
-      .catch(() => { openIssueCount = "—"; })
+  if (openIssueGuids === null){
+    openIssueGuids = "pending";
+    layers.issues.queryFeatures({where:"issue_status IN ('open','in_progress')",
+        outFields:["asset_guid"], num:2000})
+      .then(fs => { openIssueGuids = fs.features.map(f =>
+          String(f.attributes.asset_guid||"").replace(/[{}]/g,"").toLowerCase()); })
+      .catch(() => { openIssueGuids = []; })
       .then(() => { if ($("statsPanel").classList.contains("active")) buildStats(); });
   }
 }
