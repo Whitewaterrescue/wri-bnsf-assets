@@ -605,8 +605,9 @@ function buildStats(){
   if (openIssueCount === null){
     openIssueCount = "…";
     layers.issues.queryFeatureCount({where:"issue_status IN ('open','in_progress')"})
-      .then(n => { openIssueCount = n; if ($("statsPanel").classList.contains("active")) buildStats(); })
-      .catch(() => { openIssueCount = "—"; });
+      .then(n => { openIssueCount = n; })
+      .catch(() => { openIssueCount = "—"; })
+      .then(() => { if ($("statsPanel").classList.contains("active")) buildStats(); });
   }
 }
 
