@@ -3,20 +3,23 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>WRI · BNSF Asset Readiness (Beta)</title>
+<title>BNSF HAZMAT · Asset Readiness (Beta)</title>
 <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/dark/main.css">
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   :root{
-    --bg:#0a0c10;--surface:#111827;--surface-alt:#1a2234;
-    --accent:#cc0000;--text:#e5e7eb;--text-dim:#9ca3af;--text-muted:#6b7280;
-    --border:#2a2f3a;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--deployed:#3b82f6;
+    /* BNSF hazmat brand: orange #ee6e01 on warm charcoal (bnsfhazmat.com) */
+    --bg:#151310;--surface:#1f1c18;--surface-alt:#2b2926;
+    --accent:#ee6e01;--text:#e5e7eb;--text-dim:#9ca3af;--text-muted:#6b7280;
+    --border:#3b372f;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--deployed:#3b82f6;
     --font:-apple-system,system-ui,'Segoe UI',Roboto,sans-serif;
   }
   html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;overflow:hidden}
   #app{display:grid;grid-template-rows:48px 1fr;height:100%}
   header{display:flex;align-items:center;gap:10px;padding:0 12px;background:var(--surface);border-bottom:2px solid var(--accent)}
   header h1{font-size:15px;font-weight:700}
+  header .logochip{background:#fff;border-radius:6px;padding:3px 7px;display:flex;align-items:center;flex:none}
+  header .logochip img{height:18px;display:block}
   header .beta{font-size:10px;background:var(--accent);padding:2px 6px;border-radius:4px;font-weight:700}
   header .who{margin-left:auto;font-size:12px;color:var(--text-dim)}
   #main{display:grid;grid-template-columns:340px 1fr;min-height:0}
@@ -32,6 +35,7 @@
   #fab{display:none;position:fixed;bottom:18px;left:14px;z-index:35;background:var(--accent);color:#fff;border:none;border-radius:24px;padding:12px 18px;font-weight:700;font-size:14px;box-shadow:0 4px 14px rgba(0,0,0,.5);cursor:pointer}
   @media(max-width:760px){ #fab.show{display:block} }
   #list,#nearPanel{flex:1;overflow-y:auto;min-height:0}
+  #list{display:none}  /* only the active tab's panel renders */
   .row{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;gap:10px;align-items:center}
   .row:hover,.row.sel{background:var(--surface-alt)}
   .dot{width:10px;height:10px;border-radius:50%;flex:none}
@@ -111,7 +115,8 @@
 <div id="chartTip"></div>
 <div id="app">
   <header>
-    <h1>BNSF Asset Readiness</h1><span class="beta">BETA</span>
+    <span class="logochip"><img src="bnsf-hazmat-logo.png" alt="BNSF Hazmat"></span>
+    <h1>Asset Readiness</h1><span class="beta">BETA</span>
     <span class="who" id="who"></span>
     <button class="wri" id="wriToggle" title="Show/hide WRI internal tools">WRI</button>
   </header>
@@ -510,15 +515,15 @@ $("btnPrep").onclick = async () => {
     const w = window.open("", "_blank");
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Prep — ${esc(a.equipment_id)}</title><style>
       body{font-family:Segoe UI,Arial,sans-serif;font-size:12.5px;color:#111;max-width:820px;margin:24px auto;padding:0 16px}
-      h1{font-size:20px;border-bottom:3px solid #cc0000;padding-bottom:6px} h1 small{color:#666;font-weight:400;font-size:13px}
-      h2{font-size:14px;margin:18px 0 6px;color:#cc0000;text-transform:uppercase;letter-spacing:.05em}
+      h1{font-size:20px;border-bottom:3px solid #ee6e01;padding-bottom:6px} h1 small{color:#666;font-weight:400;font-size:13px}
+      h2{font-size:14px;margin:18px 0 6px;color:#ee6e01;text-transform:uppercase;letter-spacing:.05em}
       table{width:100%;border-collapse:collapse} td,th{border:1px solid #bbb;padding:4px 8px;text-align:left;font-size:12px}
       th{background:#f2f2f2} tr.sec td{background:#e8e8e8;font-weight:700} td.w{width:70px;background:#fafafa}
       .grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 18px} .grid div b{color:#555}
       .note{color:#666;font-style:italic;margin:4px 0}
       .noprint{margin:12px 0} @media print{.noprint{display:none} body{margin:6px}}
       </style></head><body>
-      <div class="noprint"><button onclick="window.print()" style="padding:10px 22px;background:#cc0000;color:#fff;border:none;border-radius:6px;font-weight:700;font-size:14px;cursor:pointer">Print</button></div>
+      <div class="noprint"><button onclick="window.print()" style="padding:10px 22px;background:#ee6e01;color:#fff;border:none;border-radius:6px;font-weight:700;font-size:14px;cursor:pointer">Print</button></div>
       <h1>Site Visit Prep — ${esc(a.equipment_id)} <small>generated ${new Date().toLocaleDateString()} · WRI BNSF Asset Readiness</small></h1>
       <div class="grid">
         <div><b>Asset:</b> ${esc(a.asset_name)}</div><div><b>Type:</b> ${title(a.asset_type)}</div>
@@ -713,7 +718,7 @@ function runNearest(){
     </div>`).join("");
   $("nearResults").querySelectorAll(".nrow").forEach(r => r.onclick = () => select(r.dataset.eid, true));
   if (window._nearMarker) gLayer.remove(window._nearMarker);
-  window._nearMarker = new Graphic({geometry:nearPt, symbol:{type:"simple-marker", style:"x", color:"#fff", size:14, outline:{color:"#cc0000", width:3}}});
+  window._nearMarker = new Graphic({geometry:nearPt, symbol:{type:"simple-marker", style:"x", color:"#fff", size:14, outline:{color:"#ee6e01", width:3}}});
   gLayer.add(window._nearMarker);
 }
 
