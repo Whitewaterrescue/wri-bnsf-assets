@@ -186,8 +186,9 @@
       <button class="btn red" id="btnCount">Inventory Count</button>
     </div>
     <div class="btns">
-      <button class="btn gray" id="btnIssue">Report Issue</button>
+      <button class="btn red" id="btnIssue">Report Issue</button>
     </div>
+    <div id="dAuditMaint"></div>
   </div>
   <div class="btns" style="padding-top:0">
     <button class="btn gray" id="btnPrep">Site Visit Prep Sheet (printable)</button>
@@ -359,10 +360,14 @@ async function boot(){
   $("loader").style.display = "none";
 
   // QR / deep link: ?asset=<equipment_id> opens that asset directly
-  const qp = new URLSearchParams(location.search).get("asset");
+  const params = new URLSearchParams(location.search);
+  const qp = params.get("asset");
   if (qp){
     const x = byId[qp.trim()] || byId[qp.trim().toUpperCase()];
-    if (x) select(x.attrs.equipment_id, true);
+    if (x){
+      select(x.attrs.equipment_id, true);
+      if (params.get("view") === "inventory") showInventory();  // QR: straight to inventory
+    }
     else toast("Asset " + qp + " not found");
   }
 }
@@ -451,12 +456,14 @@ function select(eid, zoom){
     ["VIN",a.vin],["Plate",[a.plate_number,a.plate_state].filter(Boolean).join(" ")],
     ["Tire year",a.tire_mfg_year],["GPS #",a.gps_tracking_num],["Holman",a.holman_no]];
   $("dIdent").innerHTML = kv.filter(p=>p[1]).map(p=>`<div class="k">${p[0]}</div><div>${p[1]}</div>`).join("");
-  const maintKind = t => t==="generator" ? "gen" : (t==="hyd_power_pack" ? "hpp" : null);
   $("dEquip").innerHTML = x.equip.length ? x.equip.map(e => {
-    const mk = maintKind(e.equip_type);
-    const btn = mk ? ` <a href="#" onclick="openMaint('${mk}','${String(e.GlobalID).replace(/[{}]/g,"")}','${(e.equip_id||"").replace(/'/g,"")}');return false" style="color:var(--warn);font-size:11.5px;font-weight:700">Log maintenance →</a>` : "";
+    const btn = ` <a href="#" onclick="openMaint('${maintKind(e.equip_type)}','${String(e.GlobalID).replace(/[{}]/g,"")}','${(e.equip_id||"").replace(/'/g,"")}');return false" style="color:var(--warn);font-size:11.5px;font-weight:700">Log maintenance →</a>`;
     return `<div class="eq"><b>${e.equip_id}</b>${btn}<div class="et">${title(e.equip_type)}${e.serial_num?" · SN "+e.serial_num:""}</div></div>`;
   }).join("") : "<div style='color:var(--text-muted);font-size:13px'>None linked (see parent-inference review)</div>";
+  $("dAuditMaint").innerHTML = x.equip.map(e =>
+    `<button class="btn gray" style="width:100%;margin-top:8px;text-align:left"
+      onclick="openMaint('${maintKind(e.equip_type)}','${String(e.GlobalID).replace(/[{}]/g,"")}','${(e.equip_id||"").replace(/'/g,"")}')">
+      Maintenance — ${e.equip_id} <span style="color:var(--text-dim);font-weight:400">(${title(e.equip_type)})</span></button>`).join("");
   $("dNotes").textContent = a.asset_notes || "—";
   $("btnMob").textContent = a.asset_status === "deployed" ? "Return from incident" : "Mobilize";
   $("btnMob").className = "btn " + (a.asset_status === "deployed" ? "red" : "blue");
@@ -496,9 +503,13 @@ $("btnDir").onclick = () => {
 };
 const SURVEYS = {insp:"c60619b46937485898ddd9cf5ee86d2b", issue:"c2d99f06372747fdb62d5aea7478c93c",
                  count:"97229a03495f4f8dbe2986359314e5e6",
-                 gen:"10a014d20f4a41948aff33c5aec54a52", hpp:"bbec8795f1c9476fa8e6d34aeb843ba8"};
+                 gen:"10a014d20f4a41948aff33c5aec54a52", hpp:"bbec8795f1c9476fa8e6d34aeb843ba8",
+                 em:"2108e659bf3e4d62bb385b6cc3298e54"};
 const SURVEY_TITLES = {insp:"DOT / Condition", issue:"Report Issue", count:"Inventory Count",
-                       gen:"Generator Maintenance", hpp:"HPP Maintenance"};
+                       gen:"Generator Maintenance", hpp:"HPP Maintenance", em:"Equipment Maintenance"};
+// gen/HPP have pre-surfaced task checklists; every other equipment type gets
+// the general free-entry maintenance form so all audits land in one box
+const maintKind = t => t === "generator" ? "gen" : (t === "hyd_power_pack" ? "hpp" : "em");
 // Per-asset tailored forms (pre-surfaced expected inventory) override the generic ones
 const ASSET_SURVEYS = {"TRL-OS-M2-023": {count:"6efa95ecee9a4053a13205c4d64c3c3f"}};
 
