@@ -105,7 +105,28 @@
     #panel.hide{transform:translateX(-105%)}
     #detail{width:100%}
     #mapTab{display:block}
+    #btnZoom{display:none}  /* detail covers the map on phones — nothing to zoom to */
   }
+  .auditbox{margin:0 12px 12px;border:1.5px solid var(--accent);border-radius:10px;padding:10px}
+  .auditbox .abt{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);font-weight:800;margin-bottom:8px}
+  .auditbox .btns{padding:0}
+  .auditbox .btns+.btns{padding-top:8px}
+  #lnkInv{display:inline-block;margin-top:8px;color:var(--deployed);font-size:13px;font-weight:600;text-decoration:none}
+  /* in-app overlay: surveys, instructions, inventory stay on-site */
+  #overlay{position:fixed;inset:0;background:var(--bg);z-index:80;display:none;flex-direction:column}
+  #overlay.open{display:flex}
+  #overlay .ohd{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface);border-bottom:2px solid var(--accent);flex:none}
+  #oBack{background:var(--surface-alt);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:7px 14px;font-weight:700;font-size:14px;cursor:pointer;flex:none}
+  #oTitle{font-weight:700;font-size:14px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #oExt{color:var(--text-dim);font-size:12px;text-decoration:none;flex:none}
+  #oFrame{flex:1;border:0;background:#fff;width:100%}
+  #oBody{flex:1;overflow-y:auto;padding:12px;display:none;width:100%;max-width:760px;margin:0 auto}
+  .invcat{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--accent);font-weight:800;margin:14px 0 4px}
+  .invrow{display:flex;gap:10px;justify-content:space-between;padding:6px 0;border-bottom:1px dashed var(--border);font-size:13.5px}
+  .invrow .invq{flex:none;font-weight:600}
+  .invrow.bad .invq{color:var(--warn);font-weight:700}
+  .invx{font-size:11px;color:var(--text-muted);font-weight:400}
+  .invn{font-size:11.5px;color:var(--warn)}
   #mapTab{display:none}
 </style>
 </head>
@@ -158,10 +179,15 @@
     <button class="btn gray" id="btnZoom">Zoom to</button>
     <button class="btn gray" id="btnDir">Directions</button>
   </div>
-  <div class="btns" style="padding-top:0">
-    <button class="btn red" id="btnInsp">DOT / Condition</button>
-    <button class="btn red" id="btnCount">Inventory Count</button>
-    <button class="btn gray" id="btnIssue">Report Issue</button>
+  <div class="auditbox">
+    <div class="abt">Trailer Audit</div>
+    <div class="btns">
+      <button class="btn red" id="btnInsp">DOT / Condition</button>
+      <button class="btn red" id="btnCount">Inventory Count</button>
+    </div>
+    <div class="btns">
+      <button class="btn gray" id="btnIssue">Report Issue</button>
+    </div>
   </div>
   <div class="btns" style="padding-top:0">
     <button class="btn gray" id="btnPrep">Site Visit Prep Sheet (printable)</button>
@@ -171,9 +197,19 @@
   </div>
   <div class="sec"><h3>Compliance clocks</h3><div id="dClocks"></div></div>
   <div class="sec closed" id="secHist"><h3>History</h3><div id="dHist" style="font-size:13px;color:var(--text-dim)">Loading…</div></div>
-  <div class="sec"><h3>Identity</h3><div class="kv" id="dIdent"></div></div>
+  <div class="sec"><h3>Identity</h3><div><div class="kv" id="dIdent"></div>
+    <a href="#" id="lnkInv">View up-to-date inventory &#8594;</a></div></div>
   <div class="sec"><h3>Equipment aboard</h3><div id="dEquip"></div></div>
   <div class="sec"><h3>Notes</h3><div id="dNotes" style="font-size:13px;color:var(--text-dim)">—</div></div>
+</div>
+<div id="overlay">
+  <div class="ohd">
+    <button id="oBack">&#8592; Back</button>
+    <span id="oTitle"></span>
+    <a id="oExt" href="#" target="_blank" rel="noopener">Open in tab &#8599;</a>
+  </div>
+  <iframe id="oFrame" title="embedded content"></iframe>
+  <div id="oBody"></div>
 </div>
 
 <script src="https://js.arcgis.com/4.29/"></script>
@@ -237,6 +273,7 @@ const layers = {
   maint:  new FeatureLayer({url: SVC + "/7"}),
   issues: new FeatureLayer({url: SVC + "/4"}),
   baseline: new FeatureLayer({url: SVC + "/1"}),
+  counts: new FeatureLayer({url: SVC + "/3"}),
 };
 
 async function qAll(lyr, outFields, geom){
@@ -460,18 +497,109 @@ $("btnDir").onclick = () => {
 const SURVEYS = {insp:"c60619b46937485898ddd9cf5ee86d2b", issue:"c2d99f06372747fdb62d5aea7478c93c",
                  count:"97229a03495f4f8dbe2986359314e5e6",
                  gen:"10a014d20f4a41948aff33c5aec54a52", hpp:"bbec8795f1c9476fa8e6d34aeb843ba8"};
+const SURVEY_TITLES = {insp:"DOT / Condition", issue:"Report Issue", count:"Inventory Count",
+                       gen:"Generator Maintenance", hpp:"HPP Maintenance"};
 // Per-asset tailored forms (pre-surfaced expected inventory) override the generic ones
 const ASSET_SURVEYS = {"TRL-OS-M2-023": {count:"6efa95ecee9a4053a13205c4d64c3c3f"}};
+
+// ---- in-app overlay: surveys/instructions/inventory open on-site with a Back
+// button; a history entry is pushed so the phone's back gesture also closes it.
+function openOverlay(title, opts){
+  $("oTitle").textContent = title;
+  const fr = $("oFrame"), bd = $("oBody");
+  if (opts.url){
+    fr.style.display = "block"; bd.style.display = "none";
+    fr.src = opts.url;
+    $("oExt").href = opts.url; $("oExt").style.display = "inline";
+  } else {
+    fr.style.display = "none"; bd.style.display = "block";
+    bd.innerHTML = opts.html || "";
+    $("oExt").style.display = "none";
+  }
+  if (!$("overlay").classList.contains("open")){
+    history.pushState({wriOverlay: true}, "");
+    $("overlay").classList.add("open");
+  }
+}
+function closeOverlay(fromPop){
+  if (!$("overlay").classList.contains("open")) return;
+  $("overlay").classList.remove("open");
+  $("oFrame").src = "about:blank";
+  $("oBody").innerHTML = "";
+  if (!fromPop && history.state && history.state.wriOverlay) history.back();
+}
+$("oBack").onclick = () => closeOverlay(false);
+window.addEventListener("popstate", () => closeOverlay(true));
+
 function openSurvey(kind){
   const x = byId[selected]; if (!x) return;
   const a = x.attrs;
   const guid = String(a.GlobalID||"").replace(/[{}]/g,"");
   const form = (ASSET_SURVEYS[a.equipment_id] || {})[kind] || SURVEYS[kind];
-  window.open(`https://survey123.arcgis.com/share/${form}?` +
+  openOverlay(`${SURVEY_TITLES[kind]} — ${a.equipment_id}`, {url:
+    `https://survey123.arcgis.com/share/${form}?` +
     `field:asset_guid=${encodeURIComponent("{"+guid+"}")}` +
-    `&field:asset_equipment_id=${encodeURIComponent(a.equipment_id)}`, "_blank");
+    `&field:asset_equipment_id=${encodeURIComponent(a.equipment_id)}`});
 }
-$("btnInstr").onclick = () => window.open("instructions.html", "_blank");
+
+// ---- up-to-date inventory: baseline overlaid with the latest count's adjustments
+async function showInventory(){
+  const x = byId[selected]; if (!x) return;
+  const a = x.attrs;
+  const guid = String(a.GlobalID).replace(/[{}]/g,"");
+  openOverlay("Inventory — " + a.equipment_id,
+              {html:"<div style='color:var(--text-dim)'>Loading…</div>"});
+  try {
+    const [baseFs, inspFs] = await Promise.all([
+      layers.baseline.queryFeatures({where:`asset_guid='{${guid}}'`,
+        outFields:["item_category","item_desc","item_code","expected_qty"],
+        orderByFields:["item_category","OBJECTID"], num:2000}),
+      layers.insp.queryFeatures({where:`asset_guid='{${guid}}' AND insp_type='audit_inventory'`,
+        outFields:["GlobalID","insp_date","inspector_name"],
+        orderByFields:["insp_date DESC"], num:1}),
+    ]);
+    const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const adj = {};
+    let lastCount = null;
+    if (inspFs.features.length){
+      lastCount = inspFs.features[0].attributes;
+      const ig = String(lastCount.GlobalID).replace(/[{}]/g,"");
+      const cFs = await layers.counts.queryFeatures({where:`parentglobalid='{${ig}}'`,
+        outFields:["item_desc","item_code","counted_qty","item_condition","replace_needed","count_notes"],
+        num:2000});
+      cFs.features.forEach(f => { const c = f.attributes;
+        const k = String(c.item_code || c.item_desc || "").trim().toLowerCase();
+        if (k) adj[k] = c;
+      });
+    }
+    let rows = "", lastCat = null, flagged = 0;
+    baseFs.features.forEach(f => { const b = f.attributes;
+      const c = adj[String(b.item_code||"").trim().toLowerCase()]
+             || adj[String(b.item_desc||"").trim().toLowerCase()];
+      if (b.item_category !== lastCat){
+        rows += `<div class="invcat">${esc(b.item_category||"Items")}</div>`;
+        lastCat = b.item_category;
+      }
+      const short = c && c.counted_qty != null && c.counted_qty < b.expected_qty;
+      const condBad = c && c.item_condition && c.item_condition !== "good";
+      if (short || condBad) flagged++;
+      rows += `<div class="invrow${short||condBad ? " bad" : ""}">
+        <div>${esc(b.item_desc)}
+          ${condBad ? `<div class="invn">${title(c.item_condition)}${c.replace_needed==="yes"?" · needs replacement":""}</div>` : ""}
+          ${c && c.count_notes ? `<div class="invn">${esc(c.count_notes)}</div>` : ""}</div>
+        <div class="invq">${(c && c.counted_qty != null ? c.counted_qty : b.expected_qty) ?? "—"}${short ? ` <span class="invx">of ${b.expected_qty}</span>` : ""}</div>
+      </div>`;
+    });
+    const hdr = `<div style="font-size:12px;color:var(--text-dim);margin-bottom:6px">
+      ${baseFs.features.length} line items
+      ${lastCount ? ` · adjusted by count ${fmtDate(lastCount.insp_date)}${lastCount.inspector_name?" ("+esc(lastCount.inspector_name)+")":""}` : " · baseline only — no counts recorded yet"}
+      ${flagged ? ` · <b style="color:var(--warn)">${flagged} flagged</b>` : ""}</div>`;
+    $("oBody").innerHTML = baseFs.features.length ? hdr + rows
+      : "No baseline inventory on file — run an Inventory Count to establish one.";
+  } catch(e){ console.error(e); $("oBody").innerHTML = "Inventory unavailable: " + (e.message||e); }
+}
+$("lnkInv").onclick = e => { e.preventDefault(); showInventory(); };
+$("btnInstr").onclick = () => openOverlay("Inspection & Maintenance Instructions", {url:"instructions.html"});
 $("btnInsp").onclick = () => openSurvey("insp");
 $("btnIssue").onclick = () => openSurvey("issue");
 $("btnCount").onclick = () => openSurvey("count");
@@ -560,9 +688,10 @@ $("btnPrep").onclick = async () => {
   $("btnPrep").textContent = "Site Visit Prep Sheet (printable)";
 };
 window.openMaint = (kind, equipGuid, equipId) => {
-  window.open(`https://survey123.arcgis.com/share/${SURVEYS[kind]}?` +
+  openOverlay(`${SURVEY_TITLES[kind]} — ${equipId}`, {url:
+    `https://survey123.arcgis.com/share/${SURVEYS[kind]}?` +
     `field:equip_guid=${encodeURIComponent("{"+String(equipGuid).replace(/[{}]/g,"")+"}")}` +
-    `&field:equip_id=${encodeURIComponent(equipId)}`, "_blank");
+    `&field:equip_id=${encodeURIComponent(equipId)}`});
 };
 
 // ---- history (inspections + maintenance, newest first) ----
@@ -663,8 +792,10 @@ function buildStats(){
     <div class="legend">${SEGS.map(([k,l]) => `<span><span class="dot" style="background:${COLORS[k]}"></span>${l}</span>`).join("")}</div>
     <div class="rchart">${rows}</div>
     <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Worst clock per asset · statuses recomputed nightly · tap a bar to filter the list</div>
-    <div style="margin-top:12px"><a href="instructions.html" target="_blank" style="color:var(--deployed);font-size:12.5px;font-weight:600">Inspection &amp; maintenance instructions →</a></div>`;
+    <div style="margin-top:12px"><a href="#" id="statsInstr" style="color:var(--deployed);font-size:12.5px;font-weight:600">Inspection &amp; maintenance instructions →</a></div>`;
 
+  $("statsInstr").onclick = e => { e.preventDefault();
+    openOverlay("Inspection & Maintenance Instructions", {url:"instructions.html"}); };
   const tip = $("chartTip");
   $("statsPanel").querySelectorAll(".seg").forEach(s => {
     s.onmousemove = e => { tip.style.display = "block"; tip.style.left = (e.clientX + 12) + "px";
