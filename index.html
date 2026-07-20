@@ -65,6 +65,26 @@
   .btn.red{background:var(--accent)} .btn.blue{background:var(--deployed)} .btn.gray{background:var(--surface-alt);color:var(--text)}
   #nearPanel{display:none;padding:10px 12px}
   #nearPanel.active,#list.active{display:block}
+  #statsPanel{display:none;flex:1;overflow-y:auto;min-height:0;padding:10px 12px}
+  #statsPanel.active{display:block}
+  .tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+  .tile{background:var(--surface-alt);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+  .tile .tl{font-size:11.5px;color:var(--text-dim);display:flex;align-items:center;gap:6px}
+  .tile .tv{font-size:26px;font-weight:600;margin-top:2px}
+  .rchart .rrow{margin-bottom:12px}
+  .rchart .rl{font-size:12px;color:var(--text-dim);margin-bottom:3px;display:flex;justify-content:space-between;gap:8px}
+  .rchart .rl b{color:var(--text)}
+  .rbar{display:flex;height:18px;gap:2px}
+  .rbar .seg{cursor:pointer;min-width:0}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;font-size:11.5px;color:var(--text-dim);margin:4px 0 14px}
+  .legend span{display:flex;align-items:center;gap:5px}
+  #chartTip{position:fixed;background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;pointer-events:none;display:none;z-index:60}
+  header .wri{background:none;border:1px solid var(--border);color:var(--text-muted);border-radius:6px;font-size:10px;padding:3px 7px;cursor:pointer;font-weight:700;margin-left:8px}
+  body.wri-tools header .wri{color:var(--warn);border-color:var(--warn)}
+  #tabNear{display:none}
+  body.wri-tools #tabNear{display:block}
+  #btnMob{display:none}
+  body.wri-tools #btnMob{display:block}
   #nearPanel .fld{margin-bottom:8px}
   #nearPanel input[type=text]{width:100%;padding:9px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px}
   #nearPanel label{font-size:12px;color:var(--text-dim)}
@@ -88,15 +108,18 @@
 <body>
 <div id="loader"><div class="spin"></div><div id="loadMsg">Signing in to ArcGIS…</div></div>
 <div id="toast"></div>
+<div id="chartTip"></div>
 <div id="app">
   <header>
     <h1>BNSF Asset Readiness</h1><span class="beta">BETA</span>
     <span class="who" id="who"></span>
+    <button class="wri" id="wriToggle" title="Show/hide WRI internal tools">WRI</button>
   </header>
   <div id="main">
     <div id="panel">
       <div id="tabs">
         <button id="tabList" class="active">Assets</button>
+        <button id="tabStats">Stats</button>
         <button id="tabNear">Find Nearest</button>
         <button id="mapTab">Map</button>
       </div>
@@ -114,6 +137,7 @@
         <div id="nearHint">Pick a location, then results rank by straight-line distance.</div>
         <div id="nearResults"></div>
       </div>
+      <div id="statsPanel"></div>
     </div>
     <div id="mapDiv"></div>
   </div>
@@ -156,6 +180,15 @@ const SVC = "https://services6.arcgis.com/Ji79lWGR5B33LhY7/arcgis/rest/services/
 const PORTAL = "https://www.arcgis.com";
 const COLORS = {overdue:"#ef4444", due_soon:"#f59e0b", current:"#22c55e", deployed:"#3b82f6", none:"#6b7280"};
 const SEVERITY = {overdue:0, due_soon:1, current:2, suspended:3};
+// The 8 BNSF regions, keyed by hazmat manager (assets.hazmat_manager), west→east
+const REGION_ORDER = ["Justin Piper","James Farner","Jeff Hankins","Peter Killman",
+                      "Paul Hester","Derek Lampkin","Mike Sheehan","Travis Hudson"];
+const REGION_LABEL = {
+  "Justin Piper":"Piper · WA/OR/BC/ID", "James Farner":"Farner · CA/NV/AZ",
+  "Jeff Hankins":"Hankins · NM/CO/UT",  "Peter Killman":"Killman · MT/WY",
+  "Paul Hester":"Hester · ND/MB/MN/WI", "Derek Lampkin":"Lampkin · SD/NE/KS/IA",
+  "Mike Sheehan":"Sheehan · MO/AR/IL/KY/TN/AL", "Travis Hudson":"Hudson · TX/OK/LA/MS",
+};
 
 const $ = id => document.getElementById(id);
 const toast = m => { const t=$("toast"); t.textContent=m; t.style.display="block"; setTimeout(()=>t.style.display="none", 3200); };
@@ -240,11 +273,19 @@ async function boot(){
   buildFilters();
   renderList(currentListItems());
   $("loader").style.display = "none";
+
+  // QR / deep link: ?asset=<equipment_id> opens that asset directly
+  const qp = new URLSearchParams(location.search).get("asset");
+  if (qp){
+    const x = byId[qp.trim()] || byId[qp.trim().toUpperCase()];
+    if (x) select(x.attrs.equipment_id, true);
+    else toast("Asset " + qp + " not found");
+  }
 }
 
 // ---- attribute filters (built from whatever the data actually has) ----
 const FILTER_DEFS = [
-  ["hazmat_manager", "Hazmat Mgr"], ["contractor_name", "Contractor"],
+  ["hazmat_manager", "Region", v => REGION_LABEL[v] || v], ["contractor_name", "Contractor"],
   ["asset_type", "Type"], ["asset_status", "Status"],
   ["asset_category", "Category"],
 ];
@@ -252,12 +293,13 @@ const filterState = {};
 function buildFilters(){
   const host = $("filters");
   host.innerHTML = "";
-  FILTER_DEFS.forEach(([field, label]) => {
+  FILTER_DEFS.forEach(([field, label, disp]) => {
     const vals = [...new Set(assets.map(x => x.attrs[field]).filter(Boolean))].sort();
     if (!vals.length) return;  // e.g. hazmat_manager appears once data exists
     const sel = document.createElement("select");
+    sel.id = "flt_" + field;
     sel.innerHTML = `<option value="">${label} (all)</option>` +
-      vals.map(v => `<option value="${v}">${title(String(v))}</option>`).join("");
+      vals.map(v => `<option value="${v}">${disp ? disp(v) : title(String(v))}</option>`).join("");
     sel.onchange = () => {
       filterState[field] = sel.value || null;
       sel.classList.toggle("on", !!sel.value);
@@ -482,16 +524,100 @@ async function loadHistory(x){
 // tabs
 function setTab(t){
   $("tabList").classList.toggle("active", t==="list");
+  $("tabStats").classList.toggle("active", t==="stats");
   $("tabNear").classList.toggle("active", t==="near");
   $("list").classList.toggle("active", t==="list");
+  $("statsPanel").classList.toggle("active", t==="stats");
   $("nearPanel").classList.toggle("active", t==="near");
   $("search").style.display = t==="list" ? "block" : "none";
   $("filters").style.display = t==="list" ? "flex" : "none";
+  if (t==="stats") buildStats();
   showPanel();
 }
 $("tabList").onclick = () => setTab("list");
+$("tabStats").onclick = () => setTab("stats");
 $("tabNear").onclick = () => setTab("near");
 $("mapTab").onclick = () => hidePanel();
+
+// ---- Stats tab (tiles + status-by-region bars; counts from already-loaded data) ----
+let openIssueCount = null;
+function buildStats(){
+  const worstOf = x => { const s = x.worst ? x.worst.sched_status : "none";
+                         return (s in COLORS && s !== "deployed") ? s : "none"; };
+  const c = {overdue:0, due_soon:0, current:0, none:0, deployed:0};
+  assets.forEach(x => { c[worstOf(x)]++; if (x.attrs.asset_status === "deployed") c.deployed++; });
+
+  const regions = {};
+  assets.forEach(x => {
+    const r = x.attrs.hazmat_manager || "Unassigned";
+    const g = regions[r] = regions[r] || {overdue:0, due_soon:0, current:0, none:0, total:0};
+    g[worstOf(x)]++; g.total++;
+  });
+  const regionKeys = [...REGION_ORDER.filter(r => regions[r]),
+                      ...Object.keys(regions).filter(r => !REGION_ORDER.includes(r)).sort()];
+  const maxTotal = Math.max(...regionKeys.map(r => regions[r].total), 1);
+
+  const tile = (label, val, color) =>
+    `<div class="tile"><div class="tl"><span class="dot" style="background:${color}"></span>${label}</div>
+     <div class="tv">${val}</div></div>`;
+  const SEGS = [["overdue","Overdue"],["due_soon","Due ≤ 90 days"],["current","Current"],["none","No clocks"]];
+  const rows = regionKeys.map(r => {
+    const g = regions[r];
+    const segs = SEGS.filter(([k]) => g[k] > 0);
+    const bars = segs.map(([k, lbl], i) =>
+      `<div class="seg" data-r="${r}" data-lbl="${lbl}" data-n="${g[k]}"
+        style="width:${(g[k] / maxTotal * 100).toFixed(2)}%;background:${COLORS[k]};
+        ${i === segs.length - 1 ? "border-radius:0 4px 4px 0" : ""}"></div>`).join("");
+    return `<div class="rrow"><div class="rl"><span>${REGION_LABEL[r] || r}</span><b>${g.total}</b></div>
+            <div class="rbar">${bars || ""}</div></div>`;
+  }).join("");
+
+  $("statsPanel").innerHTML =
+    `<div class="tiles">
+      ${tile("Assets tracked", assets.length, "var(--text-muted)")}
+      ${tile("Deployed to incident", c.deployed, COLORS.deployed)}
+      ${tile("Service overdue", c.overdue, COLORS.overdue)}
+      ${tile("Due ≤ 90 days", c.due_soon, COLORS.due_soon)}
+      ${tile("Current", c.current, COLORS.current)}
+      ${tile("Open issues", openIssueCount ?? "…", "var(--warn)")}
+    </div>
+    <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px">Status by region</div>
+    <div class="legend">${SEGS.map(([k,l]) => `<span><span class="dot" style="background:${COLORS[k]}"></span>${l}</span>`).join("")}</div>
+    <div class="rchart">${rows}</div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Worst clock per asset · statuses recomputed nightly · tap a bar to filter the list</div>`;
+
+  const tip = $("chartTip");
+  $("statsPanel").querySelectorAll(".seg").forEach(s => {
+    s.onmousemove = e => { tip.style.display = "block"; tip.style.left = (e.clientX + 12) + "px";
+      tip.style.top = (e.clientY + 12) + "px";
+      tip.textContent = `${s.dataset.lbl}: ${s.dataset.n} — ${REGION_LABEL[s.dataset.r] || s.dataset.r}`; };
+    s.onmouseleave = () => tip.style.display = "none";
+    s.onclick = () => {
+      tip.style.display = "none";
+      const sel = $("flt_hazmat_manager");
+      const val = s.dataset.r === "Unassigned" ? "" : s.dataset.r;
+      filterState.hazmat_manager = val || null;
+      if (sel){ sel.value = val; sel.classList.toggle("on", !!val); }
+      setTab("list"); renderList(currentListItems());
+    };
+  });
+
+  if (openIssueCount === null){
+    openIssueCount = "…";
+    layers.issues.queryFeatureCount({where:"issue_status IN ('open','in_progress')"})
+      .then(n => { openIssueCount = n; if ($("statsPanel").classList.contains("active")) buildStats(); })
+      .catch(() => { openIssueCount = "—"; });
+  }
+}
+
+// ---- WRI internal tools toggle (Find Nearest + Mobilize hidden for BNSF users) ----
+if (localStorage.getItem("wri_tools") === "1") document.body.classList.add("wri-tools");
+$("wriToggle").onclick = () => {
+  const on = document.body.classList.toggle("wri-tools");
+  localStorage.setItem("wri_tools", on ? "1" : "0");
+  if (!on && $("nearPanel").classList.contains("active")) setTab("list");
+  toast("WRI tools " + (on ? "shown" : "hidden"));
+};
 
 // ---- Find Nearest ----
 const R = 3958.8;
