@@ -148,6 +148,15 @@
   .audrow .aextra{display:none;width:100%;gap:6px}
   .audrow .aextra select,.audrow .aextra input{padding:7px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px}
   .audrow .aextra input{flex:1}
+  /* native form controls (details / maintenance / DOT) */
+  .nfin{width:100%;padding:9px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin-bottom:6px}
+  textarea.nfin{resize:vertical}
+  .taskrow{padding:8px 0;border-bottom:1px dashed var(--border)}
+  .taskrow .tlab{font-size:13.5px;margin-bottom:5px}
+  .taskrow select{padding:7px 10px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px}
+  .taskrow select.failed{border-color:var(--bad);color:var(--bad);font-weight:700}
+  .taskrow input{display:none;margin-top:6px;width:100%;padding:7px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px}
+  .taskrow.failed input{display:block}
 </style>
 </head>
 <body>
@@ -691,7 +700,7 @@ async function showInventory(){
 }
 $("lnkInv").onclick = e => { e.preventDefault(); showInventory(); };
 $("btnInstr").onclick = () => openOverlay("Inspection & Maintenance Instructions", {url:"instructions.html"});
-$("btnInsp").onclick = () => openSurvey("insp");
+$("btnInsp").onclick = () => openNativeDOT();
 $("btnIssue").onclick = () => openSurvey("issue");
 // assets with a tailored Full Audit get the guided flow; others the free-entry count
 $("btnCount").onclick = () => {
@@ -783,12 +792,16 @@ $("btnPrep").onclick = async () => {
   } catch(e){ console.error(e); toast("Prep sheet failed: " + (e.message||e)); }
   $("btnPrep").textContent = "Site Visit Prep Sheet (printable)";
 };
-window.openMaint = (kind, equipGuid, equipId) => {
+window.openMaintS123 = (kind, equipGuid, equipId) => {
   openOverlay(`${SURVEY_TITLES[kind]} — ${equipId}`, {url:
     `https://survey123.arcgis.com/share/${SURVEYS[kind]}?` +
     `field:equip_guid=${encodeURIComponent("{"+String(equipGuid).replace(/[{}]/g,"")+"}")}` +
     `&field:equip_id=${encodeURIComponent(equipId)}`});
 };
+// gen/HPP get the native task grid; the general equipment form stays S123 (free-entry)
+window.openMaint = (kind, equipGuid, equipId) =>
+  kind === "em" ? openMaintS123(kind, equipGuid, equipId)
+                : openNativeMaint(kind, equipGuid, equipId);
 
 // ================= Guided Full Audit =================
 // Flow (client 2026-07-21): equipment maintenance -> asset details + paged
@@ -862,7 +875,7 @@ async function renderGuide(x){
   html += cat("Step 1 — Asset details");
   html += step(!!detailsToday, "Confirm trailer ID, location, license, VIN",
     lastDetails ? `last confirmed ${fmtDate(lastDetails.insp_date)}` : "never confirmed",
-    lbtn("openSurvey('details')"));
+    lbtn("openNativeDetails()"));
   html += cat("Step 2 — Equipment maintenance");
   html += x.equip.length ? x.equip.map(e => {
     const kind = maintKind(e.equip_type);
@@ -918,6 +931,264 @@ window.launchResolve = async () => {
     if (!idxs.size) return toast("No open item deficiencies to resolve");
     openSurvey("resolve", {resolve_items: [...idxs].sort((p,q)=>p-q).join(",")});
   } catch(e){ console.error(e); toast("Resolve launch failed: " + (e.message||e)); }
+};
+
+// ============ native forms (primary path; each links to its S123 fallback) ============
+async function addRow(layer, attributes){
+  const res = await layer.applyEdits({addFeatures:[{attributes}]});
+  const r = res.addFeatureResults[0];
+  if (!r || r.error) throw new Error(r && r.error ? r.error.message : "insert failed");
+  return r;
+}
+const fallbackLink = fn => `<div class="cd" style="margin-bottom:10px">Poor signal or prefer the form?
+  <a href="#" onclick="${fn};return false" style="color:var(--deployed)">Use the Survey123 version</a></div>`;
+const nfInput = (id, ph, req) => `<input id="${id}" type="text" class="nfin"
+  placeholder="${ph}${req ? " (required)" : ""}">`;
+
+// task lists mirror surveys/build_maint_forms.py — keep in sync
+const GEN_TASKS = [
+  ["Engine oil","Check engine oil level, top off if low. Change oil at 100-hour intervals."],
+  ["Air filter - foam","Remove air cleaner cover, wash foam filter in detergent and warm water, rinse and dry."],
+  ["Air filter - paper","Replace paper element."],
+  ["Sediment cup","Unscrew sediment cup, clean cup and filter."],
+  ["Spark plug","Remove cap, clean spark plug base, replace plug if necessary."],
+  ["Spark arrestor","Remove from muffler, brush off carbon deposits, inspect screen for breaks or tears."],
+  ["Fuel","Drain fuel tank, refill with fresh gasoline plus stabilizer."],
+  ["Battery","Charge battery to 80 percent or greater voltage capacity."],
+  ["Storage prep","Turn fuel valve OFF, disconnect battery cables."]];
+const HPP_COMMON = [
+  ["Hydraulic oil and filter","Check hydraulic oil level, top off if low. Change oil and filter at 300-hour intervals."],
+  ["Suction strainers","Remove and clean hydraulic suction strainers at 600-hour intervals."],
+  ["Skimmer hoses and fittings","Inspect hydraulic hoses, fittings and quick-connects to the skimmer for leaks, cracking or damage."],
+  ["Drum skimmer function test","Connect the drum skimmer to the HPP and run it. Verify drum rotation, variable speed control and pickup operation. A skimmer that will not run is a CRITICAL failure."],
+  ["Shovel head skimmer check","Inspect the shovel head skimmer attachment; verify it connects and operates."]];
+const HPP_KUBOTA = [
+  ["Fuel pipes and clamps","Inspect fuel pipes and clamp bands for cracking; tighten loose bands."],
+  ["Engine oil","Check oil level, top off if low. Change oil at 100-hour intervals."],
+  ["Oil cartridge","Replace oil cartridge at 200-hour intervals."],
+  ["Air cleaner","Clean element with compressed gas."],
+  ["Fuel filter / injection pump","Rinse inside with diesel fuel and reinstall."],
+  ["Battery electrolyte","Verify electrolyte level reaches bottom of vent walls."],
+  ["Fan belt","Check tightness by pressing between pulleys."],
+  ["Radiator hoses and clamps","Inspect pipes and clamp bands for cracking."],
+  ["Radiator coolant","Check coolant level, top off if low. Replace biennially."],
+  ["Fuel","Drain tank, refill with fresh diesel plus stabilizer."],
+  ["Fuel tank","Drain and clean tank at 200-hour intervals."],
+  ["Battery","Charge battery to 80 percent or greater voltage capacity."],
+  ["Storage prep","Disconnect battery cables."]];
+const HPP_YANMAR = [
+  ["Air intake","Clean or replace at 500-hour intervals."],
+  ["Engine oil","Check oil level, top off if low. Change oil at 200-hour intervals."],
+  ["Engine oil filter","Clean or replace at 400-hour intervals."],
+  ["Fuel","Drain tank, refill with fresh diesel plus stabilizer."],
+  ["Fuel tank","Drain and clean tank at 200-hour intervals."],
+  ["Battery electrolyte","Verify electrolyte level reaches bottom of vent walls."],
+  ["Battery","Charge battery to 80 percent or greater voltage capacity."],
+  ["Storage prep","Disconnect battery cables."]];
+// (name, label) pairs must match the inspections table cond_* fields (schema_def)
+const CONDS = [
+  ["cond_lights","Stop, Turn and Tail Lights"],["cond_rear_bumper","Rear Bumper"],
+  ["cond_side_door","Side Door"],["cond_rear_door","Rear Door"],["cond_ramp_door","Ramp Door"],
+  ["cond_pullout_step","Pull Out Step"],["cond_tire_wear","Tire Wear or Uneven Tread"],
+  ["cond_tire_damage","Tire Bulges, Cuts or Cracks"],["cond_tire_pressure","Tire Pressure"],
+  ["cond_tire_valves","Tire Valves"],["cond_lug_nuts","Lug Nut Tightness and Condition"],
+  ["cond_wheel_well","Wheel Well"],["cond_spare_tire","Spare Tire"],["cond_tongue","Tongue"],
+  ["cond_safety_chains","Safety Chains"],["cond_elec_connector","Electrical Wiring Connector"],
+  ["cond_breakaway_brake","Breakaway Braking Device"],["cond_roof_vents","Roof Vent(s) and Dome Light(s)"],
+  ["cond_leaf_springs","Leaf Springs"],["cond_spring_hangers","Spring Hangers / U-Bolts"],
+  ["cond_stone_guard","Stone Guard"],["cond_d_rings","D-Rings"],["cond_trailer_jack","Trailer Jack"],
+  ["cond_interior_moisture","Interior Moisture / Condensation"]];
+
+// ---- native Asset Details confirm (guide step 1)
+window.openNativeDetails = () => {
+  const x = byId[selected]; if (!x) return;
+  const a = x.attrs;
+  openOverlay("Asset Details — " + a.equipment_id, {html:"", stack:true});
+  const kv = [["Asset ID",a.equipment_id],["Warehouse",a.current_warehouse],
+    ["Address",a.staging_desc],["Plate",[a.plate_number,a.plate_state].filter(Boolean).join(" ")],
+    ["VIN",a.vin],["Tire mfg year",a.tire_mfg_year]];
+  $("oBody").innerHTML = fallbackLink("openSurvey('details')") +
+    `<div class="kv" style="margin-bottom:12px">${kv.map(p =>
+      `<div class="k">${p[0]}</div><div>${esc(p[1]) || "—"}</div>`).join("")}</div>
+     <div style="font-size:13.5px;margin-bottom:6px">Is all of the above correct?</div>
+     <div class="btns" style="padding:0 0 10px 0">
+       <button class="btn gray" id="ndYes">Yes</button>
+       <button class="btn gray" id="ndNo">No</button></div>
+     <textarea id="ndFix" class="nfin" placeholder="What needs correcting? (required)" style="display:none;min-height:70px"></textarea>
+     ${nfInput("ndWho","Inspector name",1)}${nfInput("ndAff","Affiliation / company")}
+     <button class="btn red" id="ndSubmit" style="width:100%;margin-top:8px">Submit details check</button>`;
+  let correct = true;
+  const paint = () => {
+    $("ndYes").style.background = correct ? "var(--ok)" : "var(--surface-alt)";
+    $("ndNo").style.background = !correct ? "var(--bad)" : "var(--surface-alt)";
+    $("ndFix").style.display = correct ? "none" : "block";
+  };
+  $("ndYes").onclick = () => { correct = true; paint(); };
+  $("ndNo").onclick = () => { correct = false; paint(); };
+  paint();
+  $("ndSubmit").onclick = async () => {
+    const who = $("ndWho").value.trim();
+    if (!who) return toast("Inspector name is required");
+    const fix = $("ndFix").value.trim();
+    if (!correct && !fix) return toast("Describe what needs correcting");
+    $("ndSubmit").disabled = true;
+    try {
+      await addRow(layers.insp, {asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
+        insp_type: "asset_detail_check", insp_status: "completed",
+        insp_result: correct ? "pass" : "pass_with_issues", info_correct: correct ? "yes" : "no",
+        insp_date: Date.now(), inspector_name: who,
+        inspector_affiliation: $("ndAff").value.trim() || null,
+        insp_notes: (correct ? "Details confirmed" : "INFO CORRECTIONS: " + fix).slice(0,1000),
+        app_version: "viewer-details-v3", source_device: "browser"});
+      toast("Details check submitted");
+      history.back();
+    } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e)); $("ndSubmit").disabled = false; }
+  };
+};
+
+// ---- native Generator / HPP maintenance (task grid)
+window.openNativeMaint = (kind, equipGuid, equipId) => {
+  const isHpp = kind === "hpp";
+  openOverlay(`${SURVEY_TITLES[kind]} — ${equipId}`, {html:"", stack:true});
+  const common = isHpp ? HPP_COMMON : GEN_TASKS;
+  const taskRow = (t, i, pfx) => `<div class="taskrow" data-pfx="${pfx}" data-i="${i}">
+    <div class="tlab"><b>${esc(t[0])}</b> — <span style="color:var(--text-dim)">${esc(t[1])}</span></div>
+    <select data-tsel="1"><option value="completed">Completed</option><option value="failed">Failed</option>
+      <option value="skipped">Skipped</option><option value="na">N/A</option></select>
+    <input type="text" placeholder="What failed / notes"></div>`;
+  $("oBody").innerHTML = fallbackLink(`openMaintS123('${kind}','${String(equipGuid).replace(/[{}]/g,"")}','${equipId.replace(/'/g,"")}')`) +
+    nfInput("nmWho","Performed by",1) + nfInput("nmAff","Affiliation / company") +
+    `<input id="nmHour" type="number" inputmode="decimal" class="nfin" placeholder="Hour meter reading">` +
+    (isHpp ? `<select id="nmEngine" class="nfin"><option value="">Diesel engine type (stamped on block) — select</option>
+      <option value="kubota">Kubota</option><option value="yanmar">Yanmar</option></select>` : "") +
+    `<div class="invcat">${isHpp ? "HPP + skimmer tasks" : "Generator tasks (Honda EB3000c)"}</div>` +
+    common.map((t, i) => taskRow(t, i, "c")).join("") +
+    (isHpp ? `<div id="nmKub" style="display:none"><div class="invcat">Kubota engine tasks</div>${HPP_KUBOTA.map((t,i)=>taskRow(t,i,"k")).join("")}</div>
+      <div id="nmYan" style="display:none"><div class="invcat">Yanmar engine tasks</div>${HPP_YANMAR.map((t,i)=>taskRow(t,i,"y")).join("")}</div>` : "") +
+    `<div id="nmStat" class="cd" style="margin-top:8px">0 failed</div>
+     ${nfInput("nmParts","Parts / materials used")}
+     <textarea id="nmNotes" class="nfin" placeholder="Overall notes" style="min-height:60px"></textarea>
+     <button class="btn red" id="nmSubmit" style="width:100%;margin:10px 0">Submit maintenance</button>`;
+  const activePfx = () => isHpp
+    ? ["c", $("nmEngine").value === "kubota" ? "k" : $("nmEngine").value === "yanmar" ? "y" : null].filter(Boolean)
+    : ["c"];
+  const rowsFor = p => [...$("oBody").querySelectorAll(`.taskrow[data-pfx="${p}"]`)];
+  if (isHpp) $("nmEngine").onchange = () => { const v = $("nmEngine").value;
+    $("nmKub").style.display = v === "kubota" ? "" : "none";
+    $("nmYan").style.display = v === "yanmar" ? "" : "none"; };
+  $("oBody").onchange = e => {
+    if (!e.target.dataset.tsel) return;
+    const f = e.target.value === "failed";
+    e.target.closest(".taskrow").classList.toggle("failed", f);
+    e.target.classList.toggle("failed", f);
+    const n = activePfx().reduce((s, p) => s + rowsFor(p)
+      .filter(r => r.querySelector("select").value === "failed").length, 0);
+    $("nmStat").innerHTML = n ? `<b style="color:var(--bad)">${n} failed — will flag CRITICAL</b>` : "0 failed";
+  };
+  $("nmSubmit").onclick = async () => {
+    const who = $("nmWho").value.trim();
+    if (!who) return toast("Performed by is required");
+    if (isHpp && !$("nmEngine").value) return toast("Select the engine type");
+    $("nmSubmit").disabled = true; $("nmSubmit").textContent = "Submitting…";
+    try {
+      const tasks = [];
+      activePfx().forEach(p => rowsFor(p).forEach(r => {
+        const list = p === "c" ? common : (p === "k" ? HPP_KUBOTA : HPP_YANMAR);
+        const t = list[+r.dataset.i];
+        tasks.push({desc: t[0] + ": " + t[1], status: r.querySelector("select").value,
+                    notes: r.querySelector("input").value.trim()});
+      }));
+      const nfail = tasks.filter(t => t.status === "failed").length;
+      const parts = $("nmParts").value.trim(), notes = $("nmNotes").value.trim();
+      const ev = await addRow(layers.maint, {
+        equip_guid: "{" + String(equipGuid).replace(/[{}]/g,"") + "}", equip_id: equipId,
+        event_type: "annual", event_date: Date.now(), performed_by: who,
+        performer_affiliation: $("nmAff").value.trim() || null,
+        hour_meter: parseFloat($("nmHour").value) || null,
+        maint_status: nfail ? "completed_issues" : "completed",
+        event_notes: ((notes + (parts ? " Parts used: " + parts : "")).trim() || null),
+        app_version: "viewer-maint-v3", source_device: "browser"});
+      const pg = "{" + String(ev.globalId).replace(/[{}]/g,"") + "}";
+      const code = isHpp ? "HPP" : "GEN";
+      const kr = await layers.mtasks.applyEdits({addFeatures: tasks.map((t, i) => ({attributes:{
+        parentglobalid: pg, task_code: `${code}-${i + 1}`, task_desc: t.desc.slice(0,255),
+        task_status: t.status, task_notes: t.notes || null}}))});
+      const bad = kr.addFeatureResults.filter(r => r.error);
+      if (bad.length) throw new Error("task rows failed: " + bad[0].error.message);
+      toast(nfail ? `Submitted — ${nfail} FAILED task(s) will flag critical`
+                  : "Maintenance submitted — all tasks passed");
+      history.back();
+    } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
+      $("nmSubmit").disabled = false; $("nmSubmit").textContent = "Submit maintenance"; }
+  };
+};
+
+// ---- native DOT / condition inspection (audit box button)
+window.openNativeDOT = () => {
+  const x = byId[selected]; if (!x) return;
+  const a = x.attrs;
+  openOverlay("DOT Annual — " + a.equipment_id, {html:""});
+  const typeOpts = [["dot_annual","DOT Annual Inspection"],["bit_annual","BIT Inspection (CA)"],
+    ["condition","Condition Inspection"],["extinguisher_annual","Extinguisher Annual"],
+    ["post_deployment","Post-Deployment Inspection"],["other","Other"]];
+  const resOpts = [["pass","Pass"],["pass_with_issues","Pass with issues"],["fail","Fail"],["na","N/A"]];
+  $("oBody").innerHTML = fallbackLink("openSurvey('insp')") +
+    `<select id="dtType" class="nfin">${typeOpts.map(o => `<option value="${o[0]}">${o[1]}</option>`).join("")}</select>` +
+    nfInput("dtWho","Inspector name",1) + nfInput("dtAff","Inspector affiliation / company") +
+    `<div style="font-size:13.5px;margin:4px 0">Asset identity info (VIN, plate, location) correct?</div>
+     <select id="dtInfo" class="nfin"><option value="yes">Yes</option><option value="no">No</option></select>
+     <div class="invcat">Condition checklist</div>` +
+    CONDS.map((c, i) => `<div class="taskrow"><div class="tlab">${c[1]}</div>
+      <select data-ci="${i}"><option value="ok">OK</option><option value="needs_repair">Needs Repair</option>
+        <option value="na">N/A</option></select></div>`).join("") +
+    nfInput("dtTire","Tire DOT date codes (comma-separated)") +
+    `<textarea id="dtDmg" class="nfin" placeholder="Exterior damage notes (B=Bruise C=Cut H=Hole D=Dent M=Missing)" style="min-height:60px"></textarea>
+     <div style="font-size:13.5px;margin:4px 0">Result</div>
+     <select id="dtRes" class="nfin"><option value="">— select —</option>${resOpts.map(o =>
+       `<option value="${o[0]}">${o[1]}</option>`).join("")}</select>
+     <textarea id="dtNotes" class="nfin" placeholder="Notes" style="min-height:60px"></textarea>
+     <div style="font-size:12.5px;color:var(--text-dim);margin:4px 0">Attach signed FMCSA / DOT PDF or photo (optional)</div>
+     <input id="dtFile" type="file" class="nfin" accept=".pdf,image/*">
+     <button class="btn red" id="dtSubmit" style="width:100%;margin:10px 0">Submit inspection</button>`;
+  $("oBody").onchange = e => {
+    if (e.target.dataset.ci !== undefined)
+      e.target.classList.toggle("failed", e.target.value === "needs_repair");
+  };
+  $("dtSubmit").onclick = async () => {
+    const who = $("dtWho").value.trim();
+    if (!who) return toast("Inspector name is required");
+    const res = $("dtRes").value;
+    if (!res) return toast("Select a result");
+    $("dtSubmit").disabled = true; $("dtSubmit").textContent = "Submitting…";
+    try {
+      const attrs = {asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
+        insp_type: $("dtType").value, insp_status: "completed", insp_result: res,
+        insp_date: Date.now(), inspector_name: who,
+        inspector_affiliation: $("dtAff").value.trim() || null,
+        info_correct: $("dtInfo").value,
+        tire_dot_codes: $("dtTire").value.trim().slice(0,128) || null,
+        damage_notes: $("dtDmg").value.trim().slice(0,1000) || null,
+        insp_notes: $("dtNotes").value.trim().slice(0,1000) || null,
+        app_version: "viewer-dot-v3", source_device: "browser"};
+      $("oBody").querySelectorAll("[data-ci]").forEach(s => attrs[CONDS[+s.dataset.ci][0]] = s.value);
+      const r = await addRow(layers.insp, attrs);
+      const f = $("dtFile").files[0];
+      if (f){
+        try {
+          const cred = await esriId.getCredential(PORTAL + "/sharing");
+          const fd = new FormData();
+          fd.append("attachment", f); fd.append("f", "json"); fd.append("token", cred.token);
+          const up = await fetch(`${SVC}/2/${r.objectId}/addAttachment`, {method:"POST", body:fd})
+            .then(x => x.json());
+          if (!(up.addAttachmentResult || {}).success) throw new Error(JSON.stringify(up.error || up));
+        } catch(ae){ console.error(ae);
+          toast("Inspection saved, but the attachment failed — add it via the Survey123 form if needed"); }
+      }
+      toast("Inspection submitted — " + res.replace(/_/g, " "));
+      history.back();
+    } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
+      $("dtSubmit").disabled = false; $("dtSubmit").textContent = "Submit inspection"; }
+  };
 };
 
 // ---- native audit table: spreadsheet-style inventory count (primary path;
@@ -1091,7 +1362,7 @@ async function processAssetAudit(x){
   let events = [];
   if (eqG.length){
     const mFs = await layers.maint.queryFeatures({
-      where:`equip_guid IN (${eqG.join(",")}) AND app_version LIKE 's123%'`,
+      where:`equip_guid IN (${eqG.join(",")}) AND (app_version LIKE 's123%' OR app_version LIKE 'viewer%')`,
       outFields:["GlobalID","equip_guid","equip_id","event_date","performed_by"],
       orderByFields:["event_date DESC"], num:100});
     events = mFs.features.map(f => f.attributes);
