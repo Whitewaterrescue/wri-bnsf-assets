@@ -190,12 +190,11 @@
     <div class="abt" id="auditTitle">Trailer Audit</div>
     <div class="btns" id="auditRow1">
       <button class="btn red" id="btnInsp">DOT Annual</button>
-      <button class="btn red" id="btnCount">Audit Inventory</button>
+      <button class="btn red" id="btnCount">Audit</button>
     </div>
     <div class="btns">
       <button class="btn red" id="btnIssue">Report Issue</button>
     </div>
-    <div id="dAuditMaint"></div>
   </div>
   <div class="btns" style="padding-top:0">
     <button class="btn gray" id="btnPrep">Site Visit Prep Sheet (printable)</button>
@@ -484,10 +483,6 @@ function select(eid, zoom){
     const btn = ` <a href="#" onclick="openMaint('${maintKind(e.equip_type)}','${String(e.GlobalID).replace(/[{}]/g,"")}','${(e.equip_id||"").replace(/'/g,"")}');return false" style="color:var(--warn);font-size:11.5px;font-weight:700">Log maintenance →</a>`;
     return `<div class="eq"><b>${e.equip_id}</b>${btn}<div class="et">${title(e.equip_type)}${e.serial_num?" · SN "+e.serial_num:""}</div></div>`;
   }).join("") : "<div style='color:var(--text-muted);font-size:13px'>None linked (see parent-inference review)</div>";
-  $("dAuditMaint").innerHTML = x.equip.map(e =>
-    `<button class="btn red" style="width:100%;margin-top:8px;text-align:left"
-      onclick="openMaint('${maintKind(e.equip_type)}','${String(e.GlobalID).replace(/[{}]/g,"")}','${(e.equip_id||"").replace(/'/g,"")}')">
-      ${SURVEY_TITLES[maintKind(e.equip_type)]} <span style="color:rgba(255,255,255,.8);font-weight:400">— ${esc(e.equip_id)}</span></button>`).join("");
   // Only offer the audits this asset's schedules actually call for (e.g. capping
   // kits get Audit Inventory but never DOT); category is the no-clock fallback
   const hasClock = t => x.clocks.some(c => c.sched_type === t);
@@ -539,10 +534,12 @@ $("btnDir").onclick = () => {
 const SURVEYS = {insp:"c60619b46937485898ddd9cf5ee86d2b", issue:"c2d99f06372747fdb62d5aea7478c93c",
                  count:"97229a03495f4f8dbe2986359314e5e6",
                  gen:"10a014d20f4a41948aff33c5aec54a52", hpp:"bbec8795f1c9476fa8e6d34aeb843ba8",
-                 em:"2108e659bf3e4d62bb385b6cc3298e54"};
+                 em:"2108e659bf3e4d62bb385b6cc3298e54",
+                 details:"2863d3a181b249479f8348264749ebb6"};
 const SURVEY_TITLES = {insp:"DOT Annual", issue:"Report Issue", count:"Audit Inventory",
                        gen:"Generator Maint", hpp:"HPP Maint", em:"Equipment Maint",
-                       audit:"Audit Inventory", resolve:"Resolve Deficiencies"};
+                       audit:"Audit Inventory", resolve:"Resolve Deficiencies",
+                       details:"Asset Details"};
 // gen/HPP have pre-surfaced task checklists; every other equipment type gets
 // the general free-entry maintenance form so all audits land in one box
 const maintKind = t => t === "generator" ? "gen" : (t === "hyd_power_pack" ? "hpp" : "em");
@@ -592,7 +589,7 @@ function openSurvey(kind, extra){
   let url = `https://survey123.arcgis.com/share/${form}?` +
     `field:asset_guid=${encodeURIComponent("{"+guid+"}")}` +
     `&field:asset_equipment_id=${encodeURIComponent(a.equipment_id)}`;
-  if (kind === "audit")  // identity-confirm page prefills
+  if (kind === "details")  // identity-confirm prefills
     extra = Object.assign({f_warehouse:a.current_warehouse, f_address:a.staging_desc,
       f_plate:[a.plate_number,a.plate_state].filter(Boolean).join(" "),
       f_vin:a.vin, f_tire:a.tire_mfg_year}, extra);
@@ -788,9 +785,9 @@ async function renderGuide(x){
   const t0 = new Date(); t0.setHours(0,0,0,0);
   const eqG = x.equip.map(e => "'{"+String(e.GlobalID).replace(/[{}]/g,"")+"}'");
   const [audFs, issFs, mFs] = await Promise.all([
-    layers.insp.queryFeatures({where:`asset_guid='{${aguid}}' AND insp_type='audit_inventory'`,
-      outFields:["GlobalID","insp_date","insp_result","inspector_name"],
-      orderByFields:["insp_date DESC"], num:5}),
+    layers.insp.queryFeatures({where:`asset_guid='{${aguid}}' AND insp_type IN ('audit_inventory','asset_detail_check')`,
+      outFields:["GlobalID","insp_date","insp_result","inspector_name","insp_type"],
+      orderByFields:["insp_date DESC"], num:20}),
     layers.issues.queryFeatures({where:`asset_guid='{${aguid}}' AND issue_status IN ('open','in_progress') AND source_type='audit'`,
       outFields:["issue_severity","issue_desc","parts_needed"], num:200}),
     eqG.length ? layers.maint.queryFeatures({where:`equip_guid IN (${eqG.join(",")})`,
@@ -799,8 +796,11 @@ async function renderGuide(x){
   ]);
   const doneToday = new Set(mFs.features.filter(f => (f.attributes.event_date||0) >= +t0)
                                         .map(f => g8s(f.attributes.equip_guid)));
-  const latest = audFs.features[0] && audFs.features[0].attributes;
+  const insps = audFs.features.map(f => f.attributes);
+  const latest = insps.find(i => i.insp_type === "audit_inventory");
   const auditToday = latest && (latest.insp_date||0) >= +t0;
+  const lastDetails = insps.find(i => i.insp_type === "asset_detail_check");
+  const detailsToday = lastDetails && (lastDetails.insp_date||0) >= +t0;
   const issuesList = issFs.features.map(f => f.attributes);
   const crit = issuesList.filter(i => i.issue_severity === "critical");
   const rest = issuesList.filter(i => i.issue_severity !== "critical");
@@ -816,7 +816,11 @@ async function renderGuide(x){
   let html = `<div style="font-size:12.5px;color:var(--text-dim);margin-bottom:10px">
     Work top to bottom. After submitting a form, tap <b>&#8592; Back</b> and reopen
     the audit — status refreshes automatically.</div>`;
-  html += cat("Step 1 — Equipment maintenance");
+  html += cat("Step 1 — Asset details");
+  html += step(!!detailsToday, "Confirm trailer ID, location, license, VIN",
+    lastDetails ? `last confirmed ${fmtDate(lastDetails.insp_date)}` : "never confirmed",
+    lbtn("openSurvey('details')"));
+  html += cat("Step 2 — Equipment maintenance");
   html += x.equip.length ? x.equip.map(e => {
     const kind = maintKind(e.equip_type);
     return step(doneToday.has(g8s(e.GlobalID)),
@@ -824,11 +828,11 @@ async function renderGuide(x){
       kind === "hpp" ? "includes the skimmer function test" : null,
       lbtn(`openMaint('${kind}','${String(e.GlobalID).replace(/[{}]/g,"")}','${(e.equip_id||"").replace(/'/g,"")}')`));
   }).join("") : `<div class="cd" style="padding:4px 0 8px">No powered equipment linked — go straight to the walk.</div>`;
-  html += cat("Step 2 — Asset details + inventory walk");
-  html += step(!!auditToday, "Confirm details, then walk back &#8594; front (paged survey)",
+  html += cat("Step 3 — Inventory walk");
+  html += step(!!auditToday, "Walk back &#8594; front (paged survey)",
     latest ? `last audit ${fmtDate(latest.insp_date)} — ${verdictBadge(latest.insp_result)}` : "never audited",
     lbtn("openSurvey('audit')"));
-  html += cat(`Step 3 — Deficiencies (${issuesList.length} open)`);
+  html += cat(`Deficiencies (${issuesList.length} open)`);
   if (!issuesList.length){
     html += `<div class="cd" style="padding:4px 0">${latest
       ? `None open — <b style="color:var(--ok)">trailer is audit-complete.</b>`
