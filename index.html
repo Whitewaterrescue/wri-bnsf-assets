@@ -552,10 +552,15 @@ const ASSET_SURVEYS = {
 };
 
 // ---- in-app overlay: surveys/instructions/inventory open on-site with a Back
-// button; a history entry is pushed so the phone's back gesture also closes it.
+// button; history entries are pushed so the phone's back gesture works too.
+// Two-level stack: a survey opened FROM the audit guide gets its own entry,
+// so Back returns to the guide (which re-checks status) instead of the map.
+let guideShowing = false;
 function openOverlay(title, opts){
   $("oTitle").textContent = title;
   const fr = $("oFrame"), bd = $("oBody");
+  const stack = $("overlay").classList.contains("open") && guideShowing && !!opts.url;
+  guideShowing = false;  // guide code re-sets this after rendering its content
   if (opts.url){
     fr.style.display = "block"; bd.style.display = "none";
     fr.src = opts.url;
@@ -566,19 +571,34 @@ function openOverlay(title, opts){
     $("oExt").style.display = "none";
   }
   if (!$("overlay").classList.contains("open")){
-    history.pushState({wriOverlay: true}, "");
+    history.pushState({wriOverlay: 1}, "");
     $("overlay").classList.add("open");
+  } else if (stack){
+    history.pushState({wriOverlay: ((history.state && history.state.wriOverlay) || 1) + 1}, "");
   }
 }
 function closeOverlay(fromPop){
   if (!$("overlay").classList.contains("open")) return;
   $("overlay").classList.remove("open");
+  guideShowing = false;
   $("oFrame").src = "about:blank";
   $("oBody").innerHTML = "";
-  if (!fromPop && history.state && history.state.wriOverlay) history.back();
+  const d = history.state && history.state.wriOverlay;
+  if (!fromPop && d) history.go(-d);
 }
-$("oBack").onclick = () => closeOverlay(false);
-window.addEventListener("popstate", () => closeOverlay(true));
+$("oBack").onclick = () => {
+  if (((history.state && history.state.wriOverlay) || 0) > 1) history.back();  // pop to the guide
+  else closeOverlay(false);
+};
+window.addEventListener("popstate", e => {
+  if (!$("overlay").classList.contains("open")) return;
+  if (e.state && e.state.wriOverlay){
+    // landed on the inner overlay layer — that's the audit guide
+    const x = byId[selected];
+    if (x && (ASSET_SURVEYS[x.attrs.equipment_id]||{}).audit) showGuideContent(x);
+    else closeOverlay(true);
+  } else closeOverlay(true);
+});
 
 function openSurvey(kind, extra){
   const x = byId[selected]; if (!x) return;
@@ -766,17 +786,26 @@ const verdictBadge = r =>
   r === "pass_with_issues" ? `<b style="color:var(--warn)">PASS — with issues</b>` :
   r === "fail" ? `<b style="color:var(--bad)">FAIL — critical deficiencies</b>` : esc(r||"");
 
+function showGuideContent(x){
+  // switch the already-open overlay back to guide (body) mode and re-render
+  $("oTitle").textContent = "Full Audit — " + x.attrs.equipment_id;
+  const fr = $("oFrame"), bd = $("oBody");
+  fr.style.display = "none"; fr.src = "about:blank";
+  bd.style.display = "block"; $("oExt").style.display = "none";
+  bd.innerHTML = "<div style='color:var(--text-dim)'>Checking audit status…</div>";
+  guideShowing = true;
+  renderGuide(x).catch(e => { console.error(e);
+    bd.innerHTML = "Audit guide unavailable: " + (e.message||e); });
+}
 function openGuide(){
   const x = byId[selected]; if (!x) return;
   openOverlay("Full Audit — " + x.attrs.equipment_id,
               {html:"<div style='color:var(--text-dim)'>Checking audit status…</div>"});
+  guideShowing = true;
   renderGuide(x).catch(e => { console.error(e);
     $("oBody").innerHTML = "Audit guide unavailable: " + (e.message||e); });
 }
-window.openGuideRefresh = () => { const x = byId[selected]; if (x) {
-  $("oBody").innerHTML = "<div style='color:var(--text-dim)'>Refreshing…</div>";
-  renderGuide(x).catch(e => { console.error(e);
-    $("oBody").innerHTML = "Audit guide unavailable: " + (e.message||e); }); } };
+window.openGuideRefresh = () => { const x = byId[selected]; if (x) showGuideContent(x); };
 
 async function renderGuide(x){
   const a = x.attrs;
@@ -814,8 +843,8 @@ async function renderGuide(x){
     <div class="cn">${esc(stripTags(i.issue_desc))}</div></div>`;
 
   let html = `<div style="font-size:12.5px;color:var(--text-dim);margin-bottom:10px">
-    Work top to bottom. After submitting a form, tap <b>&#8592; Back</b> and reopen
-    the audit — status refreshes automatically.</div>`;
+    Work top to bottom. After submitting a form, tap <b>&#8592; Back</b> to return
+    here — status refreshes automatically.</div>`;
   html += cat("Step 1 — Asset details");
   html += step(!!detailsToday, "Confirm trailer ID, location, license, VIN",
     lastDetails ? `last confirmed ${fmtDate(lastDetails.insp_date)}` : "never confirmed",
