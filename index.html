@@ -74,6 +74,8 @@
   #statsPanel.active{display:block}
   .tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
   .tile{background:var(--surface-alt);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+  .tile.click{cursor:pointer}
+  .tile.on{border-color:var(--accent)}
   .tile .tl{font-size:11.5px;color:var(--text-dim);display:flex;align-items:center;gap:6px}
   .tile .tv{font-size:26px;font-weight:600;margin-top:2px}
   .rchart .rrow{margin-bottom:12px}
@@ -107,6 +109,10 @@
     #detail{width:100%}
     #mapTab{display:block}
     #btnZoom{display:none}  /* detail covers the map on phones — nothing to zoom to */
+    /* Map tab: keep the tab strip pinned, collapse the panel body so the map shows through */
+    #panel.maponly{inset:48px 0 auto 0;height:auto;border-right:none}
+    #panel.maponly #search,#panel.maponly #filters,#panel.maponly #list,
+    #panel.maponly #nearPanel,#panel.maponly #statsPanel{display:none !important}
   }
   .auditbox{margin:0 12px 12px;border:1.5px solid var(--accent);border-radius:10px;padding:10px}
   .auditbox .abt{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);font-weight:800;margin-bottom:8px}
@@ -181,10 +187,10 @@
     <button class="btn gray" id="btnDir">Directions</button>
   </div>
   <div class="auditbox">
-    <div class="abt">Trailer Audit</div>
-    <div class="btns">
-      <button class="btn red" id="btnInsp">DOT / Condition</button>
-      <button class="btn red" id="btnCount">Inventory Count</button>
+    <div class="abt" id="auditTitle">Trailer Audit</div>
+    <div class="btns" id="auditRow1">
+      <button class="btn red" id="btnInsp">DOT Annual</button>
+      <button class="btn red" id="btnCount">Audit Inventory</button>
     </div>
     <div class="btns">
       <button class="btn red" id="btnIssue">Report Issue</button>
@@ -202,7 +208,7 @@
   <div class="sec"><h3>Identity</h3><div><div class="kv" id="dIdent"></div>
     <a href="#" id="lnkInv">View up-to-date inventory &#8594;</a></div></div>
   <div class="sec"><h3>Equipment aboard</h3><div id="dEquip"></div></div>
-  <div class="sec"><h3>Notes</h3><div id="dNotes" style="font-size:13px;color:var(--text-dim)">—</div></div>
+  <div class="sec"><h3>Notes &amp; what to bring</h3><div id="dNotes" style="font-size:13px;color:var(--text-dim)">—</div></div>
 </div>
 <div id="overlay">
   <div class="ohd">
@@ -262,6 +268,20 @@ const $ = id => document.getElementById(id);
 const toast = m => { const t=$("toast"); t.textContent=m; t.style.display="block"; setTimeout(()=>t.style.display="none", 3200); };
 const fmtDate = ms => ms ? new Date(ms).toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric"}) : "—";
 const title = s => (s||"").replace(/_/g," ").replace(/\b\w/g, c=>c.toUpperCase());
+const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;");
+// One label set for clocks, history, buttons, and survey titles — platform
+// schedule naming (clock codes and migrated history codes both map in)
+const TYPE_LABEL = {
+  dot_inspection:"DOT Annual", dot_annual:"DOT Annual",
+  bit_inspection:"BIT Annual", bit_annual:"BIT Annual",
+  audit_inventory:"Audit Inventory", hpp_maint:"HPP Maint",
+  generator_maint:"Generator Maint", fire_pump_maint:"Fire Pump Maint",
+  compressor_maint:"Compressor Maint", equip_id_verify:"Equipment ID Check",
+  ics_trailer_maint:"ICS Trailer Maint", hyd_reel_trailer_maint:"Hydraulic Reel Trailer Maint",
+};
+const tlabel = t => TYPE_LABEL[t] || title(t);
+// Same category cleanup the tailored inventory survey applies at build time
+const catLabel = c => String(c||"Other items").split("(")[0].trim() || "Other items";
 
 esriId.registerOAuthInfos([new OAuthInfo({appId:"4Fi59bD09H8vlidE", portalUrl:PORTAL, popup:false})]);
 
@@ -429,7 +449,7 @@ function renderList(items){
     return `<div class="row ${selected===a.equipment_id?"sel":""}" data-eid="${a.equipment_id}">
       <span class="dot" style="background:${x.color}"></span>
       <div><div class="t">${a.equipment_id}</div><div class="s">${title(a.asset_type)} · ${(a.current_warehouse||a.staging_desc||"").split(" - ").pop()||""}</div></div>
-      <div class="due">${w ? title(w.sched_type)+"<br>"+fmtDate(w.due_date) : "no clocks"}</div>
+      <div class="due">${w ? tlabel(w.sched_type)+"<br>"+fmtDate(w.due_date) : "no clocks"}</div>
     </div>`;
   }).join("");
   $("list").querySelectorAll(".row").forEach(r => r.onclick = () => select(r.dataset.eid, true));
@@ -446,7 +466,7 @@ function select(eid, zoom){
   $("dSub").innerHTML = `${title(a.asset_type)} · ${badge(a.asset_status==="deployed"?"deployed":(x.worst?x.worst.sched_status:"none"))}`;
   $("dClocks").innerHTML = x.clocks.length ? x.clocks.map(c =>
     `<div class="clock"><span class="dot" style="background:${COLORS[c.sched_status]||COLORS.none}"></span>
-     <div class="cn">${title(c.sched_type)}${c._via?`<div class="cd">on ${c._via}</div>`:""}
+     <div class="cn">${tlabel(c.sched_type)}${c._via?`<div class="cd">on ${c._via}</div>`:""}
      ${c.sched_source==="derived"?`<div class="cd">derived date</div>`:""}</div>
      <div class="cd">due ${fmtDate(c.due_date)}</div></div>`).join("") : "<div style='color:var(--text-muted);font-size:13px'>No clocks on record</div>";
   const mgr = a.hazmat_manager, mc = REGION_CONTACT[mgr];
@@ -466,8 +486,19 @@ function select(eid, zoom){
   $("dAuditMaint").innerHTML = x.equip.map(e =>
     `<button class="btn red" style="width:100%;margin-top:8px;text-align:left"
       onclick="openMaint('${maintKind(e.equip_type)}','${String(e.GlobalID).replace(/[{}]/g,"")}','${(e.equip_id||"").replace(/'/g,"")}')">
-      Maintenance — ${e.equip_id} <span style="color:rgba(255,255,255,.8);font-weight:400">(${title(e.equip_type)})</span></button>`).join("");
-  $("dNotes").textContent = a.asset_notes || "—";
+      ${SURVEY_TITLES[maintKind(e.equip_type)]} <span style="color:rgba(255,255,255,.8);font-weight:400">— ${esc(e.equip_id)}</span></button>`).join("");
+  // Only offer the audits this asset's schedules actually call for (e.g. capping
+  // kits get Audit Inventory but never DOT); category is the no-clock fallback
+  const hasClock = t => x.clocks.some(c => c.sched_type === t);
+  const showDOT = hasClock("dot_inspection") || hasClock("bit_inspection")
+    || (!x.clocks.length && a.asset_category === "trailer");
+  const showInv = hasClock("audit_inventory")
+    || (!x.clocks.length && ["trailer","kit","container","cache","railcar"].includes(a.asset_category));
+  $("btnInsp").style.display = showDOT ? "" : "none";
+  $("btnCount").style.display = showInv ? "" : "none";
+  $("auditRow1").style.display = (showDOT || showInv) ? "" : "none";
+  $("auditTitle").textContent = (a.asset_category === "trailer" ? "Trailer" : "Asset") + " Audit";
+  loadBring(x);
   $("btnMob").textContent = a.asset_status === "deployed" ? "Return from incident" : "Mobilize";
   $("btnMob").className = "btn " + (a.asset_status === "deployed" ? "red" : "blue");
   $("detail").classList.add("open");
@@ -508,8 +539,8 @@ const SURVEYS = {insp:"c60619b46937485898ddd9cf5ee86d2b", issue:"c2d99f06372747f
                  count:"97229a03495f4f8dbe2986359314e5e6",
                  gen:"10a014d20f4a41948aff33c5aec54a52", hpp:"bbec8795f1c9476fa8e6d34aeb843ba8",
                  em:"2108e659bf3e4d62bb385b6cc3298e54"};
-const SURVEY_TITLES = {insp:"DOT / Condition", issue:"Report Issue", count:"Inventory Count",
-                       gen:"Generator Maintenance", hpp:"HPP Maintenance", em:"Equipment Maintenance"};
+const SURVEY_TITLES = {insp:"DOT Annual", issue:"Report Issue", count:"Audit Inventory",
+                       gen:"Generator Maint", hpp:"HPP Maint", em:"Equipment Maint"};
 // gen/HPP have pre-surfaced task checklists; every other equipment type gets
 // the general free-entry maintenance form so all audits land in one box
 const maintKind = t => t === "generator" ? "gen" : (t === "hyd_power_pack" ? "hpp" : "em");
@@ -567,7 +598,7 @@ async function showInventory(){
     const [baseFs, inspFs] = await Promise.all([
       layers.baseline.queryFeatures({where:`asset_guid='{${guid}}'`,
         outFields:["item_category","item_desc","item_code","expected_qty"],
-        orderByFields:["item_category","OBJECTID"], num:2000}),
+        orderByFields:["OBJECTID"], num:2000}),  // workbook order = survey order
       layers.insp.queryFeatures({where:`asset_guid='{${guid}}' AND insp_type='audit_inventory'`,
         outFields:["GlobalID","insp_date","inspector_name"],
         orderByFields:["insp_date DESC"], num:1}),
@@ -590,9 +621,10 @@ async function showInventory(){
     baseFs.features.forEach(f => { const b = f.attributes;
       const c = adj[String(b.item_code||"").trim().toLowerCase()]
              || adj[String(b.item_desc||"").trim().toLowerCase()];
-      if (b.item_category !== lastCat){
-        rows += `<div class="invcat">${esc(b.item_category||"Items")}</div>`;
-        lastCat = b.item_category;
+      const cat = catLabel(b.item_category);
+      if (cat !== lastCat){
+        rows += `<div class="invcat">${esc(cat)}</div>`;
+        lastCat = cat;
       }
       const short = c && c.counted_qty != null && c.counted_qty < b.expected_qty;
       const condBad = c && c.item_condition && c.item_condition !== "good";
@@ -609,7 +641,7 @@ async function showInventory(){
       ${lastCount ? ` · adjusted by count ${fmtDate(lastCount.insp_date)}${lastCount.inspector_name?" ("+esc(lastCount.inspector_name)+")":""}` : " · baseline only — no counts recorded yet"}
       ${flagged ? ` · <b style="color:var(--warn)">${flagged} flagged</b>` : ""}</div>`;
     $("oBody").innerHTML = baseFs.features.length ? hdr + rows
-      : "No baseline inventory on file — run an Inventory Count to establish one.";
+      : "No baseline inventory on file — run an Audit Inventory count to establish one.";
   } catch(e){ console.error(e); $("oBody").innerHTML = "Inventory unavailable: " + (e.message||e); }
 }
 $("lnkInv").onclick = e => { e.preventDefault(); showInventory(); };
@@ -623,7 +655,7 @@ document.querySelectorAll("#detail .sec h3").forEach(h =>
   h.onclick = () => h.parentElement.classList.toggle("closed"));
 
 // ---- live printable prep sheet ----
-// 24-item condition checklist (2017 workbook Inspection Form; matches the DOT/Condition survey)
+// 24-item condition checklist (2017 workbook Inspection Form; matches the DOT Annual survey)
 const COND_ITEMS = ["Stop, turn and tail lights","Rear bumper","Side door","Rear door","Ramp door",
   "Pull-out step","Tire wear or uneven tread","Tire bulges, cuts or cracks","Tire pressure","Tire valves",
   "Lug nut tightness and condition","Wheel well","Spare tire","Tongue","Safety chains",
@@ -640,26 +672,26 @@ $("btnPrep").onclick = async () => {
         outFields:["issue_severity","issue_desc","parts_needed"], num:200}),
       layers.baseline.queryFeatures({where:`asset_guid='{${guid}}'`,
         outFields:["item_category","item_desc","item_code","expected_qty"],
-        orderByFields:["item_category","OBJECTID"], num:2000}),
+        orderByFields:["OBJECTID"], num:2000}),  // workbook order = survey order
     ]);
-    const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;");
     const clockRows = x.clocks.map(c =>
       `<tr><td><b style="color:${COLORS[c.sched_status]||'#666'}">${title(c.sched_status)}</b></td>
-       <td>${title(c.sched_type)}${c._via?" (on "+esc(c._via)+")":""}</td><td>${fmtDate(c.due_date)}</td>
+       <td>${tlabel(c.sched_type)}${c._via?" (on "+esc(c._via)+")":""}</td><td>${fmtDate(c.due_date)}</td>
        <td>${c.sched_source==="derived"?"derived":""}</td></tr>`).join("");
     const issRows = issFs.features.map(f => { const i=f.attributes;
       return `<li><b>[${i.issue_severity}]</b> ${esc(i.issue_desc)}${i.parts_needed?" — <b>bring:</b> "+esc(i.parts_needed):""}</li>`;
     }).join("") || "<li>No open issues on record.</li>";
     let invRows = "", lastCat = null;
     baseFs.features.forEach(f => { const b=f.attributes;
-      if (b.item_category !== lastCat){ invRows += `<tr class="sec"><td colspan="5">${esc(b.item_category||"Items")}</td></tr>`; lastCat=b.item_category; }
+      const cat = catLabel(b.item_category);
+      if (cat !== lastCat){ invRows += `<tr class="sec"><td colspan="5">${esc(cat)}</td></tr>`; lastCat=cat; }
       invRows += `<tr><td>${esc(b.item_desc)}</td><td>${esc(b.item_code)}</td><td style="text-align:center">${b.expected_qty??""}</td><td class="w"></td><td class="w"></td></tr>`;
     });
     const invSection = baseFs.features.length
       ? `<h2>Expected inventory (${baseFs.features.length} line items — count against this)</h2>
-         <p class="note">Baseline: 2017 workbook, stale until first recount. Record counts in the Inventory Count survey; this sheet is the offline fallback.</p>
+         <p class="note">Groups and order match the Audit Inventory survey. Baseline: 2017 workbook, stale until first recount. Record counts in the Audit Inventory survey; this sheet is the offline fallback.</p>
          <table><tr><th>Item</th><th>Item #</th><th>Expected</th><th>Counted</th><th>Replace</th></tr>${invRows}</table>`
-      : `<h2>Expected inventory</h2><p class="note">No baseline on file for this asset yet — record what you find in the Inventory Count survey to establish one.</p>`;
+      : `<h2>Expected inventory</h2><p class="note">No baseline on file for this asset yet — record what you find in the Audit Inventory survey to establish one.</p>`;
     const w = window.open("", "_blank");
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Prep — ${esc(a.equipment_id)}</title><style>
       body{font-family:Segoe UI,Arial,sans-serif;font-size:12.5px;color:#111;max-width:820px;margin:24px auto;padding:0 16px}
@@ -690,7 +722,7 @@ $("btnPrep").onclick = async () => {
       compressed air, waste-oil container, absorbent pads.</p>
       <p style="font-size:12px"><b>Damage codes</b> (mark all exterior damage + photograph):
       <b>B</b> Bruise · <b>C</b> Cut · <b>H</b> Hole · <b>D</b> Dent · <b>M</b> Missing</p>
-      <p style="font-size:12px"><b>Condition checklist</b> — mark each OK / Needs Repair / N/A in the DOT-Condition survey:</p>
+      <p style="font-size:12px"><b>Condition checklist</b> — mark each OK / Needs Repair / N/A in the DOT Annual survey:</p>
       <div class="cklist">${COND_ITEMS.map(i=>`<div>&#9744; ${i}</div>`).join("")}</div>
       <p class="note">Full procedures (generator, power pack, Kubota/Yanmar task lists, manual page refs):
       https://whitewaterrescue.github.io/wri-bnsf-assets/instructions.html</p>
@@ -719,17 +751,19 @@ async function loadHistory(x){
         outFields:["insp_type","insp_status","insp_date","inspector_name","insp_notes"],
         orderByFields:["insp_date DESC"], num:200});
     inspFs.features.forEach(f => { const a=f.attributes;
-      events.push({when:a.insp_date, label:title(a.insp_type)+(a.insp_notes&&a.insp_notes.includes("(migrated")?" — "+a.insp_notes.replace(" (migrated from platform)","")+"":""),
+      const lbl = tlabel(a.insp_type);
+      events.push({when:a.insp_date, label:(a.insp_type==="other"&&a.insp_notes&&a.insp_notes.includes("(migrated")?a.insp_notes.replace(" (migrated from platform)",""):lbl),
                    who:a.inspector_name, issues:a.insp_status==="completed_issues", kind:"Inspection"});
     });
     const eqGuids = x.equip.map(e => "'{"+String(e.GlobalID).replace(/[{}]/g,"")+"}'");
+    const eqKind = Object.fromEntries(x.equip.map(e => [e.equip_id, SURVEY_TITLES[maintKind(e.equip_type)]]));
     if (eqGuids.length){
       const mFs = await layers.maint.queryFeatures({
         where:`equip_guid IN (${eqGuids.join(",")})`,
         outFields:["equip_id","event_date","performed_by","maint_status","event_notes"],
         orderByFields:["event_date DESC"], num:200});
       mFs.features.forEach(f => { const a=f.attributes;
-        events.push({when:a.event_date, label:"Maintenance — "+a.equip_id,
+        events.push({when:a.event_date, label:(eqKind[a.equip_id]||"Equipment Maint")+" — "+a.equip_id,
                      who:a.performed_by, issues:a.maint_status==="completed_issues", kind:"Maintenance"});
       });
     }
@@ -742,11 +776,34 @@ async function loadHistory(x){
   } catch(err){ console.error(err); host.textContent = "History unavailable: " + (err.message||err); }
 }
 
+// ---- Notes & what to bring: open-issue bring list lives with the asset notes ----
+async function loadBring(x){
+  const host = $("dNotes");
+  const notes = x.attrs.asset_notes;
+  host.innerHTML = notes ? esc(notes) : "—";
+  try {
+    const guid = String(x.attrs.GlobalID).replace(/[{}]/g,"");
+    const fs = await layers.issues.queryFeatures({
+      where:`asset_guid='{${guid}}' AND issue_status IN ('open','in_progress')`,
+      outFields:["issue_severity","issue_desc","parts_needed"], num:100});
+    if (x.attrs.equipment_id !== selected) return;  // user moved on mid-query
+    const bring = fs.features.length ? fs.features.map(f => { const i = f.attributes;
+      return `<div class="clock"><div class="cn">${esc(i.issue_desc)}
+        ${i.parts_needed ? `<div class="cd"><b style="color:var(--warn)">Bring:</b> ${esc(i.parts_needed)}</div>` : ""}</div>
+        <div class="cd">${title(i.issue_severity)}</div></div>`; }).join("")
+      : `<div style="color:var(--text-muted)">No open issues — nothing extra to bring.</div>`;
+    host.innerHTML = (notes ? `<div style="margin-bottom:8px">${esc(notes)}</div>` : "") +
+      `<div style="font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--warn);font-weight:800;margin-bottom:4px">What to bring — open issues</div>` + bring;
+  } catch(e){ console.error(e); }
+}
+
 // tabs
 function setTab(t){
   $("tabList").classList.toggle("active", t==="list");
   $("tabStats").classList.toggle("active", t==="stats");
   $("tabNear").classList.toggle("active", t==="near");
+  $("mapTab").classList.toggle("active", t==="map");
+  $("panel").classList.toggle("maponly", t==="map");  // mobile: tab strip stays, map shows through
   $("list").classList.toggle("active", t==="list");
   $("statsPanel").classList.toggle("active", t==="stats");
   $("nearPanel").classList.toggle("active", t==="near");
@@ -758,21 +815,22 @@ function setTab(t){
 $("tabList").onclick = () => setTab("list");
 $("tabStats").onclick = () => setTab("stats");
 $("tabNear").onclick = () => setTab("near");
-$("mapTab").onclick = () => hidePanel();
+$("mapTab").onclick = () => setTab("map");
 
 // ---- Stats tab (tiles + status-by-region bars; counts from already-loaded data) ----
-let openIssueGuids = null, statsRegion = null;
+let openIssues = null, statsRegion = null, statsDrill = null;
 function buildStats(){
   const regionOf = x => x.attrs.hazmat_manager || "Unassigned";
   const worstOf = x => { const s = x.worst ? x.worst.sched_status : "none";
                          return (s in COLORS && s !== "deployed") ? s : "none"; };
+  const inRegion = x => !statsRegion || regionOf(x) === statsRegion;
   // tiles reflect the drilled region; bars stay fleet-wide with the pick highlighted
-  const scope = statsRegion ? assets.filter(x => regionOf(x) === statsRegion) : assets;
+  const scope = assets.filter(inRegion);
   const c = {overdue:0, due_soon:0, current:0, none:0, deployed:0};
   scope.forEach(x => { c[worstOf(x)]++; if (x.attrs.asset_status === "deployed") c.deployed++; });
-  const issueN = !Array.isArray(openIssueGuids) ? "…"
-    : openIssueGuids.filter(g => { const x = byGuid[g];
-        return x && (!statsRegion || regionOf(x) === statsRegion); }).length;
+  const issuesInScope = Array.isArray(openIssues)
+    ? openIssues.filter(i => { const x = byGuid[i.g]; return x && inRegion(x); }) : null;
+  const issueN = issuesInScope ? issuesInScope.length : "…";
 
   const regions = {};
   assets.forEach(x => {
@@ -784,8 +842,9 @@ function buildStats(){
                       ...Object.keys(regions).filter(r => !REGION_ORDER.includes(r)).sort()];
   const maxTotal = Math.max(...regionKeys.map(r => regions[r].total), 1);
 
-  const tile = (label, val, color) =>
-    `<div class="tile"><div class="tl"><span class="dot" style="background:${color}"></span>${label}</div>
+  const tile = (key, label, val, color) =>
+    `<div class="tile click${statsDrill===key?" on":""}" data-drill="${key}">
+     <div class="tl"><span class="dot" style="background:${color}"></span>${label}</div>
      <div class="tv">${val}</div></div>`;
   const SEGS = [["overdue","Overdue"],["due_soon","Due ≤ 90 days"],["current","Current"],["none","No clocks"]];
   const rows = regionKeys.map(r => {
@@ -807,23 +866,59 @@ function buildStats(){
         <a href="#" id="statsToList" style="color:var(--deployed);font-weight:600">Open in Assets list →</a></div>`
     : "";
 
+  // tile drill-down: the matching assets (or issues) listed inline, region-scoped
+  let drill = "";
+  if (statsDrill){
+    const DRILL_LABEL = {all:"All assets", deployed:"Deployed to incident", overdue:"Service overdue",
+                         due_soon:"Due ≤ 90 days", current:"Current", issues:"Open issues"};
+    let drillRows;
+    if (statsDrill === "issues"){
+      drillRows = (issuesInScope || []).map(i => { const x = byGuid[i.g];
+        return `<div class="row" data-eid="${x.attrs.equipment_id}">
+          <span class="dot" style="background:var(--warn)"></span>
+          <div><div class="t">${x.attrs.equipment_id}</div><div class="s">${esc(i.desc)}</div></div>
+          <div class="due">${title(i.sev)}</div></div>`; }).join("");
+    } else {
+      const match = x => statsDrill === "all" ? true
+        : statsDrill === "deployed" ? x.attrs.asset_status === "deployed"
+        : worstOf(x) === statsDrill;
+      drillRows = scope.filter(match).map(x => { const a = x.attrs, w = x.worst;
+        return `<div class="row" data-eid="${a.equipment_id}">
+          <span class="dot" style="background:${x.color}"></span>
+          <div><div class="t">${a.equipment_id}</div><div class="s">${title(a.asset_type)} · ${(a.current_warehouse||a.staging_desc||"").split(" - ").pop()||""}</div></div>
+          <div class="due">${w ? tlabel(w.sched_type)+"<br>"+fmtDate(w.due_date) : "no clocks"}</div></div>`; }).join("");
+    }
+    drill = `<div style="display:flex;align-items:center;gap:10px;margin:2px 0 6px">
+      <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)">${DRILL_LABEL[statsDrill]}${statsRegion ? " — " + (REGION_LABEL[statsRegion]||statsRegion) : ""}</div>
+      <a href="#" id="drillClear" style="color:var(--deployed);font-size:12px;font-weight:600">Close ×</a></div>
+      <div style="margin:0 -12px 14px;border-top:1px solid var(--border)">${drillRows
+        || "<div style='color:var(--text-muted);font-size:13px;padding:8px 12px'>None</div>"}</div>`;
+  }
+
   $("statsPanel").innerHTML =
     `${chip}<div class="tiles">
-      ${tile(statsRegion ? "Assets in region" : "Assets tracked", scope.length, "var(--text-muted)")}
-      ${tile("Deployed to incident", c.deployed, COLORS.deployed)}
-      ${tile("Service overdue", c.overdue, COLORS.overdue)}
-      ${tile("Due ≤ 90 days", c.due_soon, COLORS.due_soon)}
-      ${tile("Current", c.current, COLORS.current)}
-      ${tile("Open issues", issueN, "var(--warn)")}
+      ${tile("all", statsRegion ? "Assets in region" : "Assets tracked", scope.length, "var(--text-muted)")}
+      ${tile("deployed", "Deployed to incident", c.deployed, COLORS.deployed)}
+      ${tile("overdue", "Service overdue", c.overdue, COLORS.overdue)}
+      ${tile("due_soon", "Due ≤ 90 days", c.due_soon, COLORS.due_soon)}
+      ${tile("current", "Current", c.current, COLORS.current)}
+      ${tile("issues", "Open issues", issueN, "var(--warn)")}
     </div>
+    ${drill}
     <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px">Status by region</div>
     <div class="legend">${SEGS.map(([k,l]) => `<span><span class="dot" style="background:${COLORS[k]}"></span>${l}</span>`).join("")}</div>
     <div class="rchart">${rows}</div>
-    <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Worst clock per asset · statuses recomputed nightly · tap a region to drill into its stats</div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Worst clock per asset · statuses recomputed nightly · tap a card or region to drill in</div>
     <div style="margin-top:12px"><a href="#" id="statsInstr" style="color:var(--deployed);font-size:12.5px;font-weight:600">Inspection &amp; maintenance instructions →</a></div>`;
 
   $("statsInstr").onclick = e => { e.preventDefault();
     openOverlay("Inspection & Maintenance Instructions", {url:"instructions.html"}); };
+  $("statsPanel").querySelectorAll(".tile.click").forEach(t =>
+    t.onclick = () => { statsDrill = statsDrill === t.dataset.drill ? null : t.dataset.drill; buildStats(); });
+  const dc = $("drillClear");
+  if (dc) dc.onclick = e => { e.preventDefault(); statsDrill = null; buildStats(); };
+  $("statsPanel").querySelectorAll(".row[data-eid]").forEach(r =>
+    r.onclick = () => select(r.dataset.eid, true));
   if (statsRegion){
     $("statsClear").onclick = e => { e.preventDefault(); statsRegion = null; buildStats(); };
     $("statsToList").onclick = e => { e.preventDefault();
@@ -848,13 +943,14 @@ function buildStats(){
     };
   });
 
-  if (openIssueGuids === null){
-    openIssueGuids = "pending";
+  if (openIssues === null){
+    openIssues = "pending";
     layers.issues.queryFeatures({where:"issue_status IN ('open','in_progress')",
-        outFields:["asset_guid"], num:2000})
-      .then(fs => { openIssueGuids = fs.features.map(f =>
-          String(f.attributes.asset_guid||"").replace(/[{}]/g,"").toLowerCase()); })
-      .catch(() => { openIssueGuids = []; })
+        outFields:["asset_guid","issue_severity","issue_desc"], num:2000})
+      .then(fs => { openIssues = fs.features.map(f => ({
+          g: String(f.attributes.asset_guid||"").replace(/[{}]/g,"").toLowerCase(),
+          sev: f.attributes.issue_severity, desc: f.attributes.issue_desc})); })
+      .catch(() => { openIssues = []; })
       .then(() => { if ($("statsPanel").classList.contains("active")) buildStats(); });
   }
 }
