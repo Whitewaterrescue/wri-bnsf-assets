@@ -265,8 +265,8 @@
 require([
   "esri/identity/OAuthInfo","esri/identity/IdentityManager",
   "esri/Map","esri/views/MapView","esri/layers/GraphicsLayer","esri/Graphic",
-  "esri/geometry/Point","esri/layers/FeatureLayer"
-], function(OAuthInfo, esriId, Map, MapView, GraphicsLayer, Graphic, Point, FeatureLayer){
+  "esri/geometry/Point","esri/layers/FeatureLayer","esri/widgets/Locate"
+], function(OAuthInfo, esriId, Map, MapView, GraphicsLayer, Graphic, Point, FeatureLayer, Locate){
 
 const SVC = "https://services6.arcgis.com/Ji79lWGR5B33LhY7/arcgis/rest/services/WRI_BNSF_Asset_Readiness/FeatureServer";
 const PORTAL = "https://www.arcgis.com";
@@ -414,6 +414,8 @@ async function boot(){
     center:[-105,44], zoom:4, popupEnabled:false,
     ui:{components:["zoom"]}
   });
+  // "my location" dot + pan-to (needs the browser location permission)
+  view.ui.add(new Locate({view}), "top-left");
   drawMarkers(assets);
   view.on("click", async ev => {
     if (nearMode){ nearPt = ev.mapPoint; nearMode=false; $("nearHint").textContent="Location set — ranking…"; runNearest(); return; }
