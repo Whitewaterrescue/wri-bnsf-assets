@@ -274,7 +274,7 @@ const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;");
 const TYPE_LABEL = {
   dot_inspection:"DOT Annual", dot_annual:"DOT Annual",
   bit_inspection:"BIT Annual", bit_annual:"BIT Annual",
-  audit_inventory:"Audit Inventory", hpp_maint:"HPP Maint",
+  audit_inventory:"Audit Inventory", audit_resolution:"Resolution Visit", hpp_maint:"HPP Maint",
   generator_maint:"Generator Maint", fire_pump_maint:"Fire Pump Maint",
   compressor_maint:"Compressor Maint", equip_id_verify:"Equipment ID Check",
   ics_trailer_maint:"ICS Trailer Maint", hyd_reel_trailer_maint:"Hydraulic Reel Trailer Maint",
@@ -293,6 +293,7 @@ const layers = {
   deploy: new FeatureLayer({url: SVC + "/10"}),
   insp:   new FeatureLayer({url: SVC + "/2"}),
   maint:  new FeatureLayer({url: SVC + "/7"}),
+  mtasks: new FeatureLayer({url: SVC + "/8"}),
   issues: new FeatureLayer({url: SVC + "/4"}),
   baseline: new FeatureLayer({url: SVC + "/1"}),
   counts: new FeatureLayer({url: SVC + "/3"}),
@@ -540,12 +541,18 @@ const SURVEYS = {insp:"c60619b46937485898ddd9cf5ee86d2b", issue:"c2d99f06372747f
                  gen:"10a014d20f4a41948aff33c5aec54a52", hpp:"bbec8795f1c9476fa8e6d34aeb843ba8",
                  em:"2108e659bf3e4d62bb385b6cc3298e54"};
 const SURVEY_TITLES = {insp:"DOT Annual", issue:"Report Issue", count:"Audit Inventory",
-                       gen:"Generator Maint", hpp:"HPP Maint", em:"Equipment Maint"};
+                       gen:"Generator Maint", hpp:"HPP Maint", em:"Equipment Maint",
+                       audit:"Audit Inventory", resolve:"Resolve Deficiencies"};
 // gen/HPP have pre-surfaced task checklists; every other equipment type gets
 // the general free-entry maintenance form so all audits land in one box
 const maintKind = t => t === "generator" ? "gen" : (t === "hyd_power_pack" ? "hpp" : "em");
-// Per-asset tailored forms (pre-surfaced expected inventory) override the generic ones
-const ASSET_SURVEYS = {"TRL-OS-M2-023": {count:"6efa95ecee9a4053a13205c4d64c3c3f"}};
+// Per-asset guided Full Audit + resolution forms (built from that asset's
+// baseline by build_full_audit.py / build_resolution.py)
+const ASSET_SURVEYS = {
+  "TRL-OS-M2-023": {audit:"6efa95ecee9a4053a13205c4d64c3c3f", resolve:"0d868abb55e1430ba61baac5451c07ed"},
+  "KIT-MD-00-010": {audit:"a760d82df37244df85e887f0cedc95e3", resolve:"c3efd57ad9c9450d92a3d287a347b244"},
+  "TRL-FR-T2-005": {audit:"d9b915c42eb34e1c881ac6a66b258bfc", resolve:"014970c5659845339e2893007e00535b"},
+};
 
 // ---- in-app overlay: surveys/instructions/inventory open on-site with a Back
 // button; a history entry is pushed so the phone's back gesture also closes it.
@@ -576,15 +583,22 @@ function closeOverlay(fromPop){
 $("oBack").onclick = () => closeOverlay(false);
 window.addEventListener("popstate", () => closeOverlay(true));
 
-function openSurvey(kind){
+function openSurvey(kind, extra){
   const x = byId[selected]; if (!x) return;
   const a = x.attrs;
   const guid = String(a.GlobalID||"").replace(/[{}]/g,"");
   const form = (ASSET_SURVEYS[a.equipment_id] || {})[kind] || SURVEYS[kind];
-  openOverlay(`${SURVEY_TITLES[kind]} — ${a.equipment_id}`, {url:
-    `https://survey123.arcgis.com/share/${form}?` +
+  if (!form) return toast("No " + (SURVEY_TITLES[kind]||kind) + " form for this asset");
+  let url = `https://survey123.arcgis.com/share/${form}?` +
     `field:asset_guid=${encodeURIComponent("{"+guid+"}")}` +
-    `&field:asset_equipment_id=${encodeURIComponent(a.equipment_id)}`});
+    `&field:asset_equipment_id=${encodeURIComponent(a.equipment_id)}`;
+  if (kind === "audit")  // identity-confirm page prefills
+    extra = Object.assign({f_warehouse:a.current_warehouse, f_address:a.staging_desc,
+      f_plate:[a.plate_number,a.plate_state].filter(Boolean).join(" "),
+      f_vin:a.vin, f_tire:a.tire_mfg_year}, extra);
+  for (const [k, v] of Object.entries(extra || {}))
+    if (v != null && v !== "") url += `&field:${k}=${encodeURIComponent(v)}`;
+  openOverlay(`${SURVEY_TITLES[kind]} — ${a.equipment_id}`, {url});
 }
 
 // ---- up-to-date inventory: baseline overlaid with the latest count's adjustments
@@ -648,7 +662,12 @@ $("lnkInv").onclick = e => { e.preventDefault(); showInventory(); };
 $("btnInstr").onclick = () => openOverlay("Inspection & Maintenance Instructions", {url:"instructions.html"});
 $("btnInsp").onclick = () => openSurvey("insp");
 $("btnIssue").onclick = () => openSurvey("issue");
-$("btnCount").onclick = () => openSurvey("count");
+// assets with a tailored Full Audit get the guided flow; others the free-entry count
+$("btnCount").onclick = () => {
+  const x = byId[selected];
+  if (x && (ASSET_SURVEYS[x.attrs.equipment_id]||{}).audit) openGuide();
+  else openSurvey("count");
+};
 
 // collapsible detail sections
 document.querySelectorAll("#detail .sec h3").forEach(h =>
@@ -740,6 +759,252 @@ window.openMaint = (kind, equipGuid, equipId) => {
     `&field:equip_id=${encodeURIComponent(equipId)}`});
 };
 
+// ================= Guided Full Audit =================
+// Flow (client 2026-07-21): equipment maintenance -> asset details + paged
+// inventory walk -> deficiencies. Ticks are today's submissions; the guide
+// runs the audit-processor rules live so criticals/clock react same-day.
+const g8s = s => String(s||"").replace(/[{}]/g,"").toLowerCase().slice(0,8);
+const verdictBadge = r =>
+  r === "pass" ? `<b style="color:var(--ok)">PASS</b>` :
+  r === "pass_with_issues" ? `<b style="color:var(--warn)">PASS — with issues</b>` :
+  r === "fail" ? `<b style="color:var(--bad)">FAIL — critical deficiencies</b>` : esc(r||"");
+
+function openGuide(){
+  const x = byId[selected]; if (!x) return;
+  openOverlay("Full Audit — " + x.attrs.equipment_id,
+              {html:"<div style='color:var(--text-dim)'>Checking audit status…</div>"});
+  renderGuide(x).catch(e => { console.error(e);
+    $("oBody").innerHTML = "Audit guide unavailable: " + (e.message||e); });
+}
+window.openGuideRefresh = () => { const x = byId[selected]; if (x) {
+  $("oBody").innerHTML = "<div style='color:var(--text-dim)'>Refreshing…</div>";
+  renderGuide(x).catch(e => { console.error(e);
+    $("oBody").innerHTML = "Audit guide unavailable: " + (e.message||e); }); } };
+
+async function renderGuide(x){
+  const a = x.attrs;
+  const aguid = String(a.GlobalID).replace(/[{}]/g,"");
+  try { await processAssetAudit(x); } catch(e){ console.warn("live processing skipped:", e); }
+  const t0 = new Date(); t0.setHours(0,0,0,0);
+  const eqG = x.equip.map(e => "'{"+String(e.GlobalID).replace(/[{}]/g,"")+"}'");
+  const [audFs, issFs, mFs] = await Promise.all([
+    layers.insp.queryFeatures({where:`asset_guid='{${aguid}}' AND insp_type='audit_inventory'`,
+      outFields:["GlobalID","insp_date","insp_result","inspector_name"],
+      orderByFields:["insp_date DESC"], num:5}),
+    layers.issues.queryFeatures({where:`asset_guid='{${aguid}}' AND issue_status IN ('open','in_progress') AND source_type='audit'`,
+      outFields:["issue_severity","issue_desc","parts_needed"], num:200}),
+    eqG.length ? layers.maint.queryFeatures({where:`equip_guid IN (${eqG.join(",")})`,
+      outFields:["equip_guid","event_date"], orderByFields:["event_date DESC"], num:100})
+      : Promise.resolve({features:[]}),
+  ]);
+  const doneToday = new Set(mFs.features.filter(f => (f.attributes.event_date||0) >= +t0)
+                                        .map(f => g8s(f.attributes.equip_guid)));
+  const latest = audFs.features[0] && audFs.features[0].attributes;
+  const auditToday = latest && (latest.insp_date||0) >= +t0;
+  const issuesList = issFs.features.map(f => f.attributes);
+  const crit = issuesList.filter(i => i.issue_severity === "critical");
+  const rest = issuesList.filter(i => i.issue_severity !== "critical");
+  const itemIssues = issuesList.filter(i => /\[item /.test(i.issue_desc));
+  const tick = ok => `<span style="font-weight:800;font-size:16px;color:${ok?"var(--ok)":"var(--text-muted)"}">${ok?"✓":"○"}</span>`;
+  const step = (ok, label, sub, btn) =>
+    `<div class="clock" style="gap:10px">${tick(ok)}<div class="cn">${label}${sub?`<div class="cd">${sub}</div>`:""}</div>${btn||""}</div>`;
+  const lbtn = fn => `<button class="btn red" style="flex:none;padding:8px 14px;font-size:12.5px" onclick="${fn}">Open</button>`;
+  const cat = t => `<div class="invcat">${t}</div>`;
+  const issRow = (i, color) => `<div class="clock"><span class="dot" style="background:${color};flex:none"></span>
+    <div class="cn">${esc(stripTags(i.issue_desc))}</div></div>`;
+
+  let html = `<div style="font-size:12.5px;color:var(--text-dim);margin-bottom:10px">
+    Work top to bottom. After submitting a form, tap <b>&#8592; Back</b> and reopen
+    the audit — status refreshes automatically.</div>`;
+  html += cat("Step 1 — Equipment maintenance");
+  html += x.equip.length ? x.equip.map(e => {
+    const kind = maintKind(e.equip_type);
+    return step(doneToday.has(g8s(e.GlobalID)),
+      `${SURVEY_TITLES[kind]} — ${esc(e.equip_id)}`,
+      kind === "hpp" ? "includes the skimmer function test" : null,
+      lbtn(`openMaint('${kind}','${String(e.GlobalID).replace(/[{}]/g,"")}','${(e.equip_id||"").replace(/'/g,"")}')`));
+  }).join("") : `<div class="cd" style="padding:4px 0 8px">No powered equipment linked — go straight to the walk.</div>`;
+  html += cat("Step 2 — Asset details + inventory walk");
+  html += step(!!auditToday, "Confirm details, then walk back &#8594; front (paged survey)",
+    latest ? `last audit ${fmtDate(latest.insp_date)} — ${verdictBadge(latest.insp_result)}` : "never audited",
+    lbtn("openSurvey('audit')"));
+  html += cat(`Step 3 — Deficiencies (${issuesList.length} open)`);
+  if (!issuesList.length){
+    html += `<div class="cd" style="padding:4px 0">${latest
+      ? `None open — <b style="color:var(--ok)">trailer is audit-complete.</b>`
+      : "Run the audit to establish status."}</div>`;
+  } else {
+    html += crit.map(i => issRow(i, "var(--bad)")).join("")
+          + rest.map(i => issRow(i, "var(--warn)")).join("");
+    if (itemIssues.length && (ASSET_SURVEYS[a.equipment_id]||{}).resolve)
+      html += `<div style="margin-top:10px"><button class="btn red" style="width:100%"
+        onclick="launchResolve()">Resolve deficiencies (${itemIssues.length} item${itemIssues.length>1?"s":""}) &#8594;</button></div>`;
+    if (crit.some(i => /\[maint /.test(i.issue_desc)))
+      html += `<div class="cd" style="margin-top:8px">Equipment failures clear when that
+        unit's maintenance form is re-run with every task passing.</div>`;
+  }
+  html += `<div style="margin-top:14px"><button class="btn gray" style="width:100%"
+    onclick="openGuideRefresh()">&#8635; Refresh status</button></div>`;
+  $("oBody").innerHTML = html;
+}
+
+window.launchResolve = async () => {
+  const x = byId[selected]; if (!x) return;
+  const aguid = String(x.attrs.GlobalID).replace(/[{}]/g,"");
+  try {
+    const [baseFs, issFs] = await Promise.all([
+      layers.baseline.queryFeatures({where:`asset_guid='{${aguid}}'`,
+        outFields:["item_code"], orderByFields:["OBJECTID"], num:2000}),
+      layers.issues.queryFeatures({where:`asset_guid='{${aguid}}' AND issue_status IN ('open','in_progress') AND source_type='audit'`,
+        outFields:["issue_desc"], num:200}),
+    ]);
+    const codeIdx = {};
+    baseFs.features.forEach((f, i) => codeIdx[f.attributes.item_code] = i + 1);
+    const idxs = new Set();
+    issFs.features.forEach(f => {
+      const m = f.attributes.issue_desc.match(/\[item ([^\]]+)\]/);
+      if (m && codeIdx[m[1]]) idxs.add(codeIdx[m[1]]);
+    });
+    if (!idxs.size) return toast("No open item deficiencies to resolve");
+    openSurvey("resolve", {resolve_items: [...idxs].sort((p,q)=>p-q).join(",")});
+  } catch(e){ console.error(e); toast("Resolve launch failed: " + (e.message||e)); }
+};
+
+// live mirror of ops/audit_processor.py, scoped to one asset — keeps
+// criticals, notes and the audit clock honest the same day forms come in
+async function processAssetAudit(x){
+  const a = x.attrs;
+  if (!(ASSET_SURVEYS[a.equipment_id]||{}).audit) return;
+  const aguid = String(a.GlobalID).replace(/[{}]/g,"");
+  const allIssFs = await layers.issues.queryFeatures({
+    where:`asset_guid='{${aguid}}' AND source_type='audit'`,
+    outFields:["OBJECTID","issue_severity","issue_desc","issue_status"], num:1000});
+  const allIss = allIssFs.features.map(f => f.attributes);
+  const tags = new Set();
+  allIss.forEach(i => (i.issue_desc.match(/\[(audit|maint) [0-9a-f]{8}\]/g)||[]).forEach(t => tags.add(t)));
+  const adds = [], closes = [];
+
+  // 1. audits -> issues
+  const audFs = await layers.insp.queryFeatures({
+    where:`asset_guid='{${aguid}}' AND insp_type='audit_inventory' AND app_version='s123-audit-v2'`,
+    outFields:["GlobalID","insp_result","insp_date","inspector_name"],
+    orderByFields:["insp_date DESC"], num:10});
+  for (const f of audFs.features){
+    const ins = f.attributes;
+    if (ins.insp_result !== "fail" && ins.insp_result !== "pass_with_issues") continue;
+    const tag = `[audit ${g8s(ins.GlobalID)}]`;
+    if (tags.has(tag)) continue;
+    const kids = await layers.counts.queryFeatures({
+      where:`parentglobalid='{${String(ins.GlobalID).replace(/[{}]/g,"")}}'`,
+      outFields:["item_code","item_desc","expected_qty","counted_qty","shortage_qty","count_notes"], num:500});
+    kids.features.forEach(kf => { const k = kf.attributes;
+      const critFlag = String(k.count_notes||"").startsWith("[CRITICAL]");
+      const note = String(k.count_notes||"").replace("[CRITICAL] ","").trim();
+      adds.push({attributes:{asset_guid:a.GlobalID, asset_equipment_id:a.equipment_id,
+        issue_status:"open", issue_severity: critFlag ? "critical" : "minor",
+        issue_desc: `${critFlag?"[CRITICAL] ":""}${k.item_desc}: counted ${k.counted_qty} of ${k.expected_qty}${note?" — "+note:""} [item ${k.item_code}] ${tag}`.slice(0,1000),
+        parts_needed: `${k.item_desc} x ${k.shortage_qty}`.slice(0,500),
+        reported_by: ins.inspector_name, reported_date: ins.insp_date,
+        source_type:"audit", app_version:"viewer-live"}});
+    });
+  }
+
+  // 2. failed maintenance tasks -> critical issues
+  const eqG = x.equip.map(e => "'{"+String(e.GlobalID).replace(/[{}]/g,"")+"}'");
+  let events = [];
+  if (eqG.length){
+    const mFs = await layers.maint.queryFeatures({
+      where:`equip_guid IN (${eqG.join(",")}) AND app_version LIKE 's123%'`,
+      outFields:["GlobalID","equip_guid","equip_id","event_date","performed_by"],
+      orderByFields:["event_date DESC"], num:100});
+    events = mFs.features.map(f => f.attributes);
+  }
+  const evFailed = {};
+  if (events.length){
+    const evG = events.map(e => "'{"+String(e.GlobalID).replace(/[{}]/g,"")+"}'");
+    const tFs = await layers.mtasks.queryFeatures({
+      where:`task_status='failed' AND parentglobalid IN (${evG.join(",")})`,
+      outFields:["parentglobalid","task_desc"], num:500});
+    tFs.features.forEach(f => { const k = g8s(f.attributes.parentglobalid);
+      (evFailed[k] = evFailed[k]||[]).push(String(f.attributes.task_desc||"task").split(":")[0]); });
+  }
+  events.forEach(e => {
+    const t8 = g8s(e.GlobalID), fails = evFailed[t8], tag = `[maint ${t8}]`;
+    if (!fails || tags.has(tag)) return;
+    adds.push({attributes:{asset_guid:a.GlobalID, asset_equipment_id:a.equipment_id,
+      issue_status:"open", issue_severity:"critical",
+      issue_desc:`[CRITICAL] Equipment failure — ${e.equip_id}: ${fails.join("; ")} ${tag}`.slice(0,1000),
+      reported_by:e.performed_by, reported_date:e.event_date,
+      source_type:"audit", app_version:"viewer-live"}});
+  });
+
+  // 3. resolutions close matching item issues
+  const resFs = await layers.insp.queryFeatures({
+    where:`asset_guid='{${aguid}}' AND insp_type='audit_resolution'`,
+    outFields:["GlobalID"], num:20});
+  const resolvedCodes = new Set();
+  for (const f of resFs.features){
+    const kids = await layers.counts.queryFeatures({
+      where:`parentglobalid='{${String(f.attributes.GlobalID).replace(/[{}]/g,"")}}'`,
+      outFields:["item_code","count_notes"], num:500});
+    kids.features.forEach(kf => {
+      if (String(kf.attributes.count_notes||"").startsWith("resolution:yes"))
+        resolvedCodes.add(kf.attributes.item_code); });
+  }
+  const isOpen = i => i.issue_status === "open" || i.issue_status === "in_progress";
+  allIss.filter(isOpen).forEach(i => {
+    for (const c of resolvedCodes)
+      if (i.issue_desc.includes(`[item ${c}]`)){
+        closes.push({attributes:{OBJECTID:i.OBJECTID, issue_status:"resolved"}});
+        i.issue_status = "resolved"; return;
+      }
+  });
+
+  // 4. clean maintenance re-run closes that unit's failure issues
+  const lastClean = {};
+  events.forEach(e => { if (!evFailed[g8s(e.GlobalID)]){
+    const k = g8s(e.equip_guid);
+    lastClean[k] = Math.max(lastClean[k]||0, e.event_date||0); } });
+  allIss.filter(isOpen).forEach(i => {
+    const m = i.issue_desc.match(/\[maint ([0-9a-f]{8})\]/); if (!m) return;
+    const src = events.find(e => g8s(e.GlobalID) === m[1]); if (!src) return;
+    if ((lastClean[g8s(src.equip_guid)]||0) > (src.event_date||0)){
+      closes.push({attributes:{OBJECTID:i.OBJECTID, issue_status:"resolved"}});
+      i.issue_status = "resolved";
+    }
+  });
+  if (adds.length || closes.length)
+    await layers.issues.applyEdits({addFeatures:adds, updateFeatures:closes});
+
+  // 5. clock: red until no critical remains, then advance once per audit
+  const latest = audFs.features[0] && audFs.features[0].attributes;
+  if (latest){
+    const critOpen = allIss.some(i => isOpen(i) && i.issue_severity === "critical")
+      || adds.some(ad => ad.attributes.issue_severity === "critical");
+    const clock = x.clocks.find(c => c.sched_type === "audit_inventory" && !c._via);
+    if (!critOpen && clock && g8s(clock.completed_by_guid) !== g8s(latest.GlobalID)){
+      const months = clock.interval_months || 12;
+      const due = (latest.insp_date || Date.now()) + months * 30.44 * 86400000;
+      const days = (due - Date.now()) / 86400000;
+      const status = days < 0 ? "overdue" : (days <= 90 ? "due_soon" : "current");
+      await layers.sched.applyEdits({updateFeatures:[{attributes:{
+        OBJECTID: clock.OBJECTID, last_completed: latest.insp_date,
+        due_date: Math.round(due), completed_by_guid: latest.GlobalID,
+        sched_status: status}}]});
+      clock.last_completed = latest.insp_date; clock.due_date = Math.round(due);
+      clock.completed_by_guid = latest.GlobalID; clock.sched_status = status;
+      x.clocks.sort((p,q) => (SEVERITY[p.sched_status]??9)-(SEVERITY[q.sched_status]??9)
+                          || (p.due_date||9e15)-(q.due_date||9e15));
+      x.worst = x.clocks[0];
+      x.color = a.asset_status === "deployed" ? COLORS.deployed
+              : COLORS[x.worst ? x.worst.sched_status : "none"];
+      drawMarkers(currentListItems());
+    }
+  }
+  if (selected === a.equipment_id) select(a.equipment_id, false);  // refresh detail
+}
+window.openSurvey = openSurvey;
+
 // ---- history (inspections + maintenance, newest first) ----
 async function loadHistory(x){
   const host = $("dHist");
@@ -776,7 +1041,8 @@ async function loadHistory(x){
   } catch(err){ console.error(err); host.textContent = "History unavailable: " + (err.message||err); }
 }
 
-// ---- Notes & what to bring: open-issue bring list lives with the asset notes ----
+// ---- Notes & what to bring: open issues split critical / bring-next-time ----
+const stripTags = d => String(d||"").replace(/\s*\[(item|audit|maint)[^\]]*\]/g,"").replace(/^\[CRITICAL\]\s*/,"");
 async function loadBring(x){
   const host = $("dNotes");
   const notes = x.attrs.asset_notes;
@@ -785,15 +1051,28 @@ async function loadBring(x){
     const guid = String(x.attrs.GlobalID).replace(/[{}]/g,"");
     const fs = await layers.issues.queryFeatures({
       where:`asset_guid='{${guid}}' AND issue_status IN ('open','in_progress')`,
-      outFields:["issue_severity","issue_desc","parts_needed"], num:100});
+      outFields:["issue_severity","issue_desc","parts_needed"], num:200});
     if (x.attrs.equipment_id !== selected) return;  // user moved on mid-query
-    const bring = fs.features.length ? fs.features.map(f => { const i = f.attributes;
-      return `<div class="clock"><div class="cn">${esc(i.issue_desc)}
-        ${i.parts_needed ? `<div class="cd"><b style="color:var(--warn)">Bring:</b> ${esc(i.parts_needed)}</div>` : ""}</div>
-        <div class="cd">${title(i.issue_severity)}</div></div>`; }).join("")
-      : `<div style="color:var(--text-muted)">No open issues — nothing extra to bring.</div>`;
-    host.innerHTML = (notes ? `<div style="margin-bottom:8px">${esc(notes)}</div>` : "") +
-      `<div style="font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--warn);font-weight:800;margin-bottom:4px">What to bring — open issues</div>` + bring;
+    const items = fs.features.map(f => f.attributes);
+    const crit = items.filter(i => i.issue_severity === "critical");
+    const rest = items.filter(i => i.issue_severity !== "critical");
+    const hdr = (txt, color) => `<div style="font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:${color};font-weight:800;margin:8px 0 4px">${txt}</div>`;
+    const row = (i, color) => `<div class="clock"><div class="cn">${esc(stripTags(i.issue_desc))}
+      ${i.parts_needed ? `<div class="cd"><b style="color:${color}">Bring:</b> ${esc(i.parts_needed)}</div>` : ""}</div>
+      <div class="cd">${title(i.issue_severity)}</div></div>`;
+    let html = notes ? `<div style="margin-bottom:8px">${esc(notes)}</div>` : "";
+    if (crit.length)
+      html += hdr("Critical — resolve urgently", "var(--bad)") + crit.map(i => row(i, "var(--bad)")).join("");
+    if (rest.length)
+      html += hdr("What to bring next time", "var(--warn)") + rest.map(i => row(i, "var(--warn)")).join("");
+    if (!items.length)
+      html += hdr("What to bring next time", "var(--warn)") +
+        `<div style="color:var(--text-muted)">No open issues — nothing extra to bring.</div>`;
+    host.innerHTML = html;
+    const chip = $("dAuditChip");
+    if (chip) chip.remove();
+    if (crit.length) $("dSub").insertAdjacentHTML("beforeend",
+      ` <span class="badge" id="dAuditChip" style="background:var(--bad);color:#fff">CRITICAL ITEMS OPEN</span>`);
   } catch(e){ console.error(e); }
 }
 
