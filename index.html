@@ -135,6 +135,19 @@
   .invx{font-size:11px;color:var(--text-muted);font-weight:400}
   .invn{font-size:11.5px;color:var(--warn)}
   #mapTab{display:none}
+  /* native audit table (spreadsheet-style inventory count) */
+  .audhead{position:sticky;top:0;background:var(--bg);padding:4px 0 8px;z-index:5;display:grid;gap:6px}
+  .audhead input{padding:9px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;width:100%}
+  .audrow{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--border);flex-wrap:wrap}
+  .audrow .adesc{flex:1;min-width:170px;font-size:13.5px}
+  .audrow .asub{display:block;font-size:11px;color:var(--text-muted)}
+  .audrow .aexp{width:52px;text-align:right;color:var(--text-dim);font-size:13px;flex:none}
+  .audrow .aq{width:72px;padding:8px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;text-align:center;flex:none}
+  .audrow.dev .aq{border-color:var(--warn)}
+  .audrow.crit .aq{border-color:var(--bad)}
+  .audrow .aextra{display:none;width:100%;gap:6px}
+  .audrow .aextra select,.audrow .aextra input{padding:7px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px}
+  .audrow .aextra input{flex:1}
 </style>
 </head>
 <body>
@@ -559,7 +572,8 @@ let guideShowing = false;
 function openOverlay(title, opts){
   $("oTitle").textContent = title;
   const fr = $("oFrame"), bd = $("oBody");
-  const stack = $("overlay").classList.contains("open") && guideShowing && !!opts.url;
+  const stack = $("overlay").classList.contains("open") &&
+                (opts.stack || (guideShowing && !!opts.url));
   guideShowing = false;  // guide code re-sets this after rendering its content
   if (opts.url){
     fr.style.display = "block"; bd.style.display = "none";
@@ -858,9 +872,12 @@ async function renderGuide(x){
       lbtn(`openMaint('${kind}','${String(e.GlobalID).replace(/[{}]/g,"")}','${(e.equip_id||"").replace(/'/g,"")}')`));
   }).join("") : `<div class="cd" style="padding:4px 0 8px">No powered equipment linked — go straight to the walk.</div>`;
   html += cat("Step 3 — Inventory walk");
-  html += step(!!auditToday, "Walk back &#8594; front (paged survey)",
+  html += step(!!auditToday, "Count against the item table — search, then edit the quantities that differ",
     latest ? `last audit ${fmtDate(latest.insp_date)} — ${verdictBadge(latest.insp_result)}` : "never audited",
-    lbtn("openSurvey('audit')"));
+    lbtn("openNativeAudit()"));
+  html += `<div class="cd" style="margin:2px 0 8px">Poor signal at the trailer?
+    <a href="#" onclick="openSurvey('audit');return false" style="color:var(--deployed)">Use the Survey123 form instead</a>
+    — it can also be downloaded to the Survey123 field app for fully offline use.</div>`;
   html += cat(`Deficiencies (${issuesList.length} open)`);
   if (!issuesList.length){
     html += `<div class="cd" style="padding:4px 0">${latest
@@ -903,6 +920,133 @@ window.launchResolve = async () => {
   } catch(e){ console.error(e); toast("Resolve launch failed: " + (e.message||e)); }
 };
 
+// ---- native audit table: spreadsheet-style inventory count (primary path;
+// the S123 paged form stays available as the low-connectivity fallback).
+// Writes the SAME records the survey does (audit inspection + deviation child
+// rows, [CRITICAL] tags, verdict), so issues/clock/resolution are identical.
+window.openNativeAudit = async () => {
+  const x = byId[selected]; if (!x) return;
+  const a = x.attrs;
+  openOverlay("Audit Inventory — " + a.equipment_id,
+              {html:"<div style='color:var(--text-dim)'>Loading item list…</div>", stack:true});
+  try {
+    const guid = String(a.GlobalID).replace(/[{}]/g,"");
+    const fs = await layers.baseline.queryFeatures({where:`asset_guid='{${guid}}'`,
+      outFields:["item_code","item_desc","item_category","expected_qty","item_unit",
+                 "critical_item","replace_qty","baseline_notes"],
+      orderByFields:["OBJECTID"], num:2000});
+    const items = fs.features.map(f => f.attributes);
+    if (!items.length){ $("oBody").innerHTML = "No baseline inventory on file for this asset."; return; }
+    let lastCat = null;
+    const rowsHtml = items.map((b, i) => {
+      const exp = b.expected_qty ?? 1;
+      const cat = catLabel(b.item_category);
+      const hdr = cat !== lastCat ? `<div class="invcat">${esc(cat)}</div>` : "";
+      lastCat = cat;
+      const unit = (b.item_unit && b.item_unit !== "each") ? " " + esc(b.item_unit) : "";
+      const loc = b.baseline_notes ? ` · ${esc(b.baseline_notes)}` : "";
+      return `${hdr}<div class="audrow" data-search="${esc((b.item_desc + " " + (b.item_code||"") + " " + cat).toLowerCase())}">
+        <div class="adesc">${esc(b.item_desc)}${b.critical_item === "yes" ? ' <span style="color:var(--warn)">&#9888;</span>' : ""}
+          <span class="asub">${esc(b.item_code||"")}${loc}</span></div>
+        <div class="aexp">${exp}${unit}</div>
+        <input class="aq" type="number" inputmode="decimal" step="any" value="${exp}" data-i="${i}">
+        <div class="aextra" id="ax${i}">
+          <select id="ac${i}"><option value="good">Good</option><option value="worn">Worn</option>
+            <option value="damaged">Damaged</option><option value="expired">Expired</option>
+            <option value="missing">Missing</option></select>
+          <input id="an${i}" type="text" placeholder="Notes">
+        </div></div>`;
+    }).join("");
+    $("oBody").innerHTML = `
+      <div class="audhead">
+        <input id="audWho" type="text" placeholder="Inspector name (required)">
+        <input id="audAff" type="text" placeholder="Affiliation / company">
+        <input id="audSearch" type="text" placeholder="Search items…">
+        <div id="audStat" class="cd">0 deviations</div>
+      </div>
+      <div style="display:flex;gap:8px;font-size:11px;color:var(--text-muted);padding:4px 0;text-transform:uppercase;letter-spacing:.05em">
+        <div style="flex:1">Contents</div><div style="width:52px;text-align:right">Expect</div><div style="width:72px;text-align:center">Actual</div></div>
+      ${rowsHtml}
+      <button class="btn red" id="audSubmit" style="width:100%;margin:14px 0">Submit audit</button>
+      <div class="cd" style="margin-bottom:14px">Every item starts at its expected quantity — change only what
+      differs. Entries are lost if you leave this page before submitting.</div>`;
+    const critOf = i => items[i].critical_item === "yes";
+    const threshOf = i => items[i].replace_qty ?? items[i].expected_qty ?? 1;
+    const stat = () => {
+      let nd = 0, nc = 0;
+      $("oBody").querySelectorAll(".aq").forEach(inp => {
+        const i = +inp.dataset.i, exp = items[i].expected_qty ?? 1, v = parseFloat(inp.value);
+        const dev = !isNaN(v) && v !== exp;
+        document.getElementById("ax" + i).style.display = dev ? "flex" : "none";
+        inp.closest(".audrow").classList.toggle("dev", dev);
+        const isCrit = dev && critOf(i) && v < threshOf(i);
+        inp.closest(".audrow").classList.toggle("crit", isCrit);
+        if (dev){ nd++; if (isCrit) nc++; }
+      });
+      $("audStat").innerHTML = `${nd} deviation${nd === 1 ? "" : "s"}${nc ? ` · <b style="color:var(--bad)">${nc} critical</b>` : ""}`;
+      return {nd, nc};
+    };
+    $("oBody").oninput = e => {
+      if (e.target.classList.contains("aq")) stat();
+      if (e.target.id === "audSearch"){
+        const q = e.target.value.trim().toLowerCase();
+        $("oBody").querySelectorAll(".audrow").forEach(r =>
+          r.style.display = !q || r.dataset.search.includes(q) ? "" : "none");
+        $("oBody").querySelectorAll(".invcat").forEach(h => {
+          let el = h.nextElementSibling, any = false;
+          while (el && !el.classList.contains("invcat")){
+            if (el.classList.contains("audrow") && el.style.display !== "none"){ any = true; break; }
+            el = el.nextElementSibling;
+          }
+          h.style.display = (any || !q) ? "" : "none";
+        });
+      }
+    };
+    $("audSubmit").onclick = async () => {
+      const who = $("audWho").value.trim();
+      if (!who) return toast("Inspector name is required");
+      const {nd, nc} = stat();
+      $("audSubmit").disabled = true; $("audSubmit").textContent = "Submitting…";
+      try {
+        const result = nc > 0 ? "fail" : (nd > 0 ? "pass_with_issues" : "pass");
+        const res = await layers.insp.applyEdits({addFeatures:[{attributes:{
+          asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
+          insp_type: "audit_inventory", insp_status: "completed", insp_result: result,
+          insp_date: Date.now(), inspector_name: who,
+          inspector_affiliation: $("audAff").value.trim() || null,
+          insp_notes: `Full audit: ${nd} deviation(s), ${nc} critical.`,
+          app_version: "viewer-audit-v3", source_device: "browser"}}]});
+        const ar = res.addFeatureResults[0];
+        if (!ar || ar.error) throw new Error(ar && ar.error ? ar.error.message : "insert failed");
+        const pguid = "{" + String(ar.globalId).replace(/[{}]/g, "") + "}";
+        const kids = [];
+        $("oBody").querySelectorAll(".aq").forEach(inp => {
+          const i = +inp.dataset.i, b = items[i], exp = b.expected_qty ?? 1, v = parseFloat(inp.value);
+          if (isNaN(v) || v === exp) return;
+          const isCrit = critOf(i) && v < threshOf(i);
+          const note = document.getElementById("an" + i).value.trim();
+          kids.push({attributes:{parentglobalid: pguid, asset_equipment_id: a.equipment_id,
+            item_code: b.item_code, item_desc: b.item_desc, expected_qty: exp,
+            counted_qty: v, shortage_qty: exp - v,
+            item_condition: document.getElementById("ac" + i).value,
+            replace_needed: exp - v > 0 ? "yes" : "no",
+            count_notes: (isCrit ? "[CRITICAL] " : "") + note}});
+        });
+        if (kids.length){
+          const kr = await layers.counts.applyEdits({addFeatures: kids});
+          const bad = kr.addFeatureResults.filter(r => r.error);
+          if (bad.length) throw new Error("deviation rows failed: " + bad[0].error.message);
+        }
+        toast(`Audit submitted — ${result === "pass" ? "all items present" :
+          nd + " deviation(s)" + (nc ? ", " + nc + " CRITICAL" : "")}`);
+        history.back();  // pops to the guide layer, which re-checks status
+      } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
+        $("audSubmit").disabled = false; $("audSubmit").textContent = "Submit audit"; }
+    };
+    stat();
+  } catch(e){ console.error(e); $("oBody").innerHTML = "Failed to load: " + (e.message||e); }
+};
+
 // live mirror of ops/audit_processor.py, scoped to one asset — keeps
 // criticals, notes and the audit clock honest the same day forms come in
 async function processAssetAudit(x){
@@ -919,7 +1063,7 @@ async function processAssetAudit(x){
 
   // 1. audits -> issues
   const audFs = await layers.insp.queryFeatures({
-    where:`asset_guid='{${aguid}}' AND insp_type='audit_inventory' AND app_version='s123-audit-v2'`,
+    where:`asset_guid='{${aguid}}' AND insp_type='audit_inventory' AND app_version IN ('s123-audit-v2','viewer-audit-v3')`,
     outFields:["GlobalID","insp_result","insp_date","inspector_name"],
     orderByFields:["insp_date DESC"], num:10});
   for (const f of audFs.features){
