@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>BNSF HAZMAT · Asset Readiness (Beta)</title>
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/dark/main.css">
@@ -16,7 +16,7 @@
     --font:-apple-system,system-ui,'Segoe UI',Roboto,sans-serif;
   }
   html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;overflow:hidden}
-  #app{display:grid;grid-template-rows:48px 1fr;height:100%}
+  #app{display:grid;grid-template-rows:48px 1fr;height:100%;height:100dvh}
   header{display:flex;align-items:center;gap:10px;padding:0 12px;background:var(--surface);border-bottom:2px solid var(--accent)}
   header h1{font-size:15px;font-weight:700}
   header .logochip{background:#fff;border-radius:6px;padding:3px 7px;display:flex;align-items:center;flex:none}
@@ -34,7 +34,7 @@
   #filters select.on{border-color:var(--accent)}
   #fltCount{width:100%;font-size:11.5px;color:var(--text-muted);padding:0 2px}
   #fab{display:none;position:fixed;bottom:18px;left:14px;z-index:35;background:var(--accent);color:#fff;border:none;border-radius:24px;padding:12px 18px;font-weight:700;font-size:14px;box-shadow:0 4px 14px rgba(0,0,0,.5);cursor:pointer}
-  @media(max-width:760px){ #fab.show{display:block} }
+  /* FAB retired — the bottom tab bar handles mobile navigation */
   #list,#nearPanel{flex:1;overflow-y:auto;min-height:0}
   #list{display:none}  /* only the active tab's panel renders */
   .row{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;gap:10px;align-items:center}
@@ -101,15 +101,23 @@
   #loader{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;z-index:99}
   .spin{width:34px;height:34px;border:4px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:sp 1s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
-  #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--surface-alt);border:1px solid var(--border);padding:10px 18px;border-radius:8px;font-size:13.5px;display:none;z-index:98}
+  #toast{position:fixed;bottom:calc(18px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);background:var(--surface-alt);border:1px solid var(--border);padding:10px 18px;border-radius:8px;font-size:13.5px;display:none;z-index:98;max-width:92vw}
+  #mtabs{display:none}
   @media(max-width:760px){
     #main{grid-template-columns:1fr}
-    #panel{position:absolute;inset:48px 0 0 0;z-index:30;transition:transform .2s}
+    /* bottom tab bar replaces the top strip + FAB on phones */
+    #tabs{display:none}
+    #mtabs{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:45;background:var(--surface);border-top:2px solid var(--accent);padding-bottom:env(safe-area-inset-bottom)}
+    #mtabs button{flex:1;padding:13px 4px;background:none;border:none;color:var(--text-dim);font-weight:700;font-size:13.5px}
+    #mtabs button.active{color:var(--accent)}
+    #mtabNear{display:none}
+    body.wri-tools #mtabs #mtabNear{display:block}
+    #panel{position:absolute;inset:48px 0 calc(46px + env(safe-area-inset-bottom)) 0;z-index:30;transition:transform .2s}
     #panel.hide{transform:translateX(-105%)}
-    #detail{width:100%}
-    #mapTab{display:block}
+    #detail{width:100%;padding-bottom:calc(52px + env(safe-area-inset-bottom))}
+    #toast{bottom:calc(60px + env(safe-area-inset-bottom))}
     #btnZoom{display:none}  /* detail covers the map on phones — nothing to zoom to */
-    /* Map tab: keep the tab strip pinned, collapse the panel body so the map shows through */
+    /* Map tab: collapse the panel so the map shows through; bottom bar stays */
     #panel.maponly{inset:48px 0 auto 0;height:auto;border-right:none}
     #panel.maponly #search,#panel.maponly #filters,#panel.maponly #list,
     #panel.maponly #nearPanel,#panel.maponly #statsPanel{display:none !important}
@@ -120,14 +128,14 @@
   .auditbox .btns+.btns{padding-top:8px}
   #lnkInv{display:inline-block;margin-top:8px;color:var(--deployed);font-size:13px;font-weight:600;text-decoration:none}
   /* in-app overlay: surveys, instructions, inventory stay on-site */
-  #overlay{position:fixed;inset:0;background:var(--bg);z-index:80;display:none;flex-direction:column}
+  #overlay{position:fixed;inset:0;height:100dvh;background:var(--bg);z-index:80;display:none;flex-direction:column}
   #overlay.open{display:flex}
   #overlay .ohd{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface);border-bottom:2px solid var(--accent);flex:none}
   #oBack{background:var(--surface-alt);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:7px 14px;font-weight:700;font-size:14px;cursor:pointer;flex:none}
   #oTitle{font-weight:700;font-size:14px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #oExt{color:var(--text-dim);font-size:12px;text-decoration:none;flex:none}
   #oFrame{flex:1;border:0;background:#fff;width:100%}
-  #oBody{flex:1;overflow-y:auto;padding:12px;display:none;width:100%;max-width:760px;margin:0 auto}
+  #oBody{flex:1;overflow-y:auto;padding:12px 12px calc(28px + env(safe-area-inset-bottom));display:none;width:100%;max-width:760px;margin:0 auto}
   .invcat{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--accent);font-weight:800;margin:14px 0 4px}
   .invrow{display:flex;gap:10px;justify-content:space-between;padding:6px 0;border-bottom:1px dashed var(--border);font-size:13.5px}
   .invrow .invq{flex:none;font-weight:600}
@@ -198,6 +206,12 @@
   </div>
 </div>
 <button id="fab">&#9776; List</button>
+<nav id="mtabs">
+  <button id="mtabList">Assets</button>
+  <button id="mtabStats">Stats</button>
+  <button id="mtabNear">Nearest</button>
+  <button id="mtabMap">Map</button>
+</nav>
 <div id="detail">
   <div class="hd">
     <div><h2 id="dTitle"></h2><div id="dSub" style="font-size:12px;color:var(--text-dim);margin-top:3px"></div></div>
@@ -701,13 +715,13 @@ async function showInventory(){
 $("lnkInv").onclick = e => { e.preventDefault(); showInventory(); };
 $("btnInstr").onclick = () => openOverlay("Inspection & Maintenance Instructions", {url:"instructions.html"});
 $("btnInsp").onclick = () => openNativeDOT();
-$("btnIssue").onclick = () => openSurvey("issue");
 // assets with a tailored Full Audit get the guided flow; others the free-entry count
 $("btnCount").onclick = () => {
   const x = byId[selected];
   if (x && (ASSET_SURVEYS[x.attrs.equipment_id]||{}).audit) openGuide();
   else openSurvey("count");
 };
+$("btnIssue").onclick = () => openNativeIssue();
 
 // collapsible detail sections
 document.querySelectorAll("#detail .sec h3").forEach(h =>
@@ -911,7 +925,7 @@ async function renderGuide(x){
   $("oBody").innerHTML = html;
 }
 
-window.launchResolve = async () => {
+window.launchResolveS123 = async () => {
   const x = byId[selected]; if (!x) return;
   const aguid = String(x.attrs.GlobalID).replace(/[{}]/g,"");
   try {
@@ -933,13 +947,147 @@ window.launchResolve = async () => {
   } catch(e){ console.error(e); toast("Resolve launch failed: " + (e.message||e)); }
 };
 
+// native resolve table: only this asset's open item deficiencies, one row each
+window.launchResolve = async () => {
+  const x = byId[selected]; if (!x) return;
+  const a = x.attrs;
+  openOverlay("Resolve Deficiencies — " + a.equipment_id,
+              {html:"<div style='color:var(--text-dim)'>Loading deficiencies…</div>", stack:true});
+  try {
+    const aguid = String(a.GlobalID).replace(/[{}]/g,"");
+    const [baseFs, issFs] = await Promise.all([
+      layers.baseline.queryFeatures({where:`asset_guid='{${aguid}}'`,
+        outFields:["item_code","item_desc","expected_qty"], orderByFields:["OBJECTID"], num:2000}),
+      layers.issues.queryFeatures({where:`asset_guid='{${aguid}}' AND issue_status IN ('open','in_progress') AND source_type='audit'`,
+        outFields:["issue_desc","issue_severity"], num:200}),
+    ]);
+    const codeInfo = {};
+    baseFs.features.forEach(f => { const b = f.attributes;
+      codeInfo[b.item_code] = {desc: b.item_desc, exp: b.expected_qty ?? 1}; });
+    const rows = [];
+    issFs.features.forEach(f => {
+      const m = f.attributes.issue_desc.match(/\[item ([^\]]+)\]/);
+      if (!m || !codeInfo[m[1]] || rows.some(r => r.code === m[1])) return;
+      rows.push({code: m[1], crit: f.attributes.issue_severity === "critical", ...codeInfo[m[1]]});
+    });
+    if (!rows.length){
+      $("oBody").innerHTML = fallbackLink("launchResolveS123()") +
+        "No open item deficiencies. Equipment failures clear by re-running that unit's maintenance form with all tasks passing.";
+      return;
+    }
+    $("oBody").innerHTML = fallbackLink("launchResolveS123()") +
+      nfInput("nrWho","Resolved by",1) + nfInput("nrAff","Affiliation / company") +
+      `<div class="invcat">Open deficiencies (${rows.length})</div>` +
+      rows.map((r, i) => `<div class="taskrow" data-i="${i}">
+        <div class="tlab">${r.crit ? '<b style="color:var(--bad)">[CRITICAL]</b> ' : ""}${esc(r.desc)}
+          <span style="color:var(--text-dim)">— expected ${r.exp}</span></div>
+        <select data-rs="1"><option value="yes">Fully restocked / repaired</option>
+          <option value="partial">Partially resolved</option>
+          <option value="no">Could not resolve</option></select>
+        <input type="number" inputmode="decimal" step="any" placeholder="Qty now on hand (required)" style="display:block;margin-top:6px">
+        <input type="text" placeholder="Notes" style="display:block;margin-top:6px"></div>`).join("") +
+      `<button class="btn red" id="nrSubmit" style="width:100%;margin:12px 0">Submit resolutions</button>`;
+    $("nrSubmit").onclick = async () => {
+      const who = $("nrWho").value.trim();
+      if (!who){ nag($("nrWho")); return toast("Resolved by is required"); }
+      const rowEls = [...$("oBody").querySelectorAll(".taskrow")];
+      for (const el of rowEls){
+        const q = el.querySelector("input[type=number]");
+        if (q.value.trim() === ""){ nag(q); return toast("Enter qty now on hand for every item"); }
+      }
+      $("nrSubmit").disabled = true; $("nrSubmit").textContent = "Submitting…";
+      try {
+        const ins = await addRow(layers.insp, {asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
+          insp_type: "audit_resolution", insp_status: "completed", insp_result: "na",
+          insp_date: Date.now(), inspector_name: who,
+          inspector_affiliation: $("nrAff").value.trim() || null,
+          insp_notes: `Resolution visit: ${rows.length} item(s)`,
+          app_version: "viewer-resolve", source_device: "browser"});
+        const pg = "{" + String(ins.globalId).replace(/[{}]/g,"") + "}";
+        const kids = rowEls.map(el => { const r = rows[+el.dataset.i];
+          const st = el.querySelector("select").value;
+          const v = parseFloat(el.querySelector("input[type=number]").value) || 0;
+          const note = el.querySelector("input[type=text]").value.trim();
+          return {attributes:{parentglobalid: pg, asset_equipment_id: a.equipment_id,
+            item_code: r.code, item_desc: r.desc, expected_qty: r.exp, counted_qty: v,
+            shortage_qty: r.exp - v, replace_needed: st === "yes" ? "no" : "yes",
+            item_condition: st === "yes" ? "good" : "missing",
+            count_notes: ("resolution:" + st + (note ? " " + note : "")).slice(0,500)}};
+        });
+        const kr = await layers.counts.applyEdits({addFeatures: kids});
+        const bad = kr.addFeatureResults.filter(r => r.error);
+        if (bad.length) throw new Error("rows failed: " + bad[0].error.message);
+        openIssues = null;  // stats cache stale
+        toast("Resolutions submitted");
+        history.back();  // guide layer re-renders and closes issues / advances the clock
+      } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
+        $("nrSubmit").disabled = false; $("nrSubmit").textContent = "Submit resolutions"; }
+    };
+  } catch(e){ console.error(e); $("oBody").innerHTML = "Failed to load: " + (e.message||e); }
+};
+
+// ---- native Report Issue (audit box button)
+window.openNativeIssue = () => {
+  const x = byId[selected]; if (!x) return;
+  const a = x.attrs;
+  openOverlay("Report Issue — " + a.equipment_id, {html:""});
+  $("oBody").innerHTML = fallbackLink("openSurvey('issue')") +
+    `<select id="niSev" class="nfin"><option value="">Severity — select</option>
+      <option value="critical">Critical — response capability compromised</option>
+      <option value="major">Major</option><option value="minor">Minor</option></select>
+     <textarea id="niDesc" class="nfin" placeholder="Describe the issue (required)" style="min-height:80px"></textarea>
+     <textarea id="niParts" class="nfin" placeholder="Parts / materials needed — feeds the bring list" style="min-height:50px"></textarea>
+     ${nfInput("niWho","Your name",1)}
+     <div style="font-size:12.5px;color:var(--text-dim);margin:4px 0">Photo (optional)</div>
+     <input id="niFile" type="file" class="nfin" accept="image/*,.pdf">
+     <button class="btn red" id="niSubmit" style="width:100%;margin:10px 0">Submit issue</button>`;
+  $("niSubmit").onclick = async () => {
+    const sev = $("niSev").value, desc = $("niDesc").value.trim(), who = $("niWho").value.trim();
+    if (!sev){ nag($("niSev")); return toast("Select a severity"); }
+    if (!desc){ nag($("niDesc")); return toast("Describe the issue"); }
+    if (!who){ nag($("niWho")); return toast("Your name is required"); }
+    $("niSubmit").disabled = true; $("niSubmit").textContent = "Submitting…";
+    try {
+      const r = await addRow(layers.issues, {asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
+        issue_status: "open", issue_severity: sev, issue_desc: desc,
+        parts_needed: $("niParts").value.trim() || null, reported_by: who,
+        reported_date: Date.now(), source_type: "field_report",
+        app_version: "viewer-issue", source_device: "browser"});
+      const f = $("niFile").files[0];
+      if (f){
+        try {
+          const cred = await esriId.getCredential(PORTAL + "/sharing");
+          const fd = new FormData();
+          fd.append("attachment", f); fd.append("f", "json"); fd.append("token", cred.token);
+          const up = await fetch(`${SVC}/4/${r.objectId}/addAttachment`, {method:"POST", body:fd})
+            .then(x => x.json());
+          if (!(up.addAttachmentResult || {}).success) throw new Error("attach failed");
+        } catch(ae){ console.error(ae);
+          toast("Issue saved, but the photo failed — attach via the Survey123 form if needed"); }
+      }
+      openIssues = null;  // stats cache stale
+      toast("Issue reported" + (sev === "critical" ? " — CRITICAL" : ""));
+      loadBring(x);
+      history.back();
+    } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
+      $("niSubmit").disabled = false; $("niSubmit").textContent = "Submit issue"; }
+  };
+};
+
 // ============ native forms (primary path; each links to its S123 fallback) ============
 async function addRow(layer, attributes){
+  // trim every string to its field length — SQL truncation errors otherwise
+  const flds = {};
+  (layer.fields || []).forEach(f => { if (f.length) flds[f.name] = f.length; });
+  for (const [k, v] of Object.entries(attributes))
+    if (typeof v === "string" && flds[k] && v.length > flds[k])
+      attributes[k] = v.slice(0, flds[k]);
   const res = await layer.applyEdits({addFeatures:[{attributes}]});
-  const r = res.addFeatureResults[0];
+  const r = (res.addFeatureResults || res.addResults || [])[0];
   if (!r || r.error) throw new Error(r && r.error ? r.error.message : "insert failed");
   return r;
 }
+const nag = el => { el.scrollIntoView({block:"center"}); el.focus(); };
 const fallbackLink = fn => `<div class="cd" style="margin-bottom:10px">Poor signal or prefer the form?
   <a href="#" onclick="${fn};return false" style="color:var(--deployed)">Use the Survey123 version</a></div>`;
 const nfInput = (id, ph, req) => `<input id="${id}" type="text" class="nfin"
@@ -1039,7 +1187,7 @@ window.openNativeDetails = () => {
         insp_date: Date.now(), inspector_name: who,
         inspector_affiliation: $("ndAff").value.trim() || null,
         insp_notes: (correct ? "Details confirmed" : "INFO CORRECTIONS: " + fix).slice(0,1000),
-        app_version: "viewer-details-v3", source_device: "browser"});
+        app_version: "viewer-details", source_device: "browser"});
       toast("Details check submitted");
       history.back();
     } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e)); $("ndSubmit").disabled = false; }
@@ -1530,7 +1678,11 @@ function setTab(t){
   $("tabStats").classList.toggle("active", t==="stats");
   $("tabNear").classList.toggle("active", t==="near");
   $("mapTab").classList.toggle("active", t==="map");
-  $("panel").classList.toggle("maponly", t==="map");  // mobile: tab strip stays, map shows through
+  $("mtabList").classList.toggle("active", t==="list");
+  $("mtabStats").classList.toggle("active", t==="stats");
+  $("mtabNear").classList.toggle("active", t==="near");
+  $("mtabMap").classList.toggle("active", t==="map");
+  $("panel").classList.toggle("maponly", t==="map");  // mobile: map shows through
   $("list").classList.toggle("active", t==="list");
   $("statsPanel").classList.toggle("active", t==="stats");
   $("nearPanel").classList.toggle("active", t==="near");
@@ -1543,9 +1695,56 @@ $("tabList").onclick = () => setTab("list");
 $("tabStats").onclick = () => setTab("stats");
 $("tabNear").onclick = () => setTab("near");
 $("mapTab").onclick = () => setTab("map");
+// bottom bar: same tabs; tapping one also dismisses an open detail panel
+["List","Stats","Near","Map"].forEach(n => $("mtab"+n).onclick = () => {
+  $("detail").classList.remove("open");
+  setTab(n.toLowerCase());
+});
 
 // ---- Stats tab (tiles + status-by-region bars; counts from already-loaded data) ----
-let openIssues = null, statsRegion = null, statsDrill = null;
+let openIssues = null, statsRegion = null, statsDrill = null, activity = null;
+// Recent activity: every submission is already recorded (inspections, maint
+// events, issues, deployments + editor tracking) — merge the latest here
+function loadActivity(){
+  if (activity !== null) return;
+  activity = "pending";
+  const noMig = "(app_version <> 'migration-v1' OR app_version IS NULL)";
+  Promise.all([
+    layers.insp.queryFeatures({where:noMig,
+      outFields:["insp_type","insp_date","inspector_name","asset_equipment_id","insp_result"],
+      orderByFields:["insp_date DESC"], num:40}),
+    layers.maint.queryFeatures({where:noMig,
+      outFields:["equip_id","event_date","performed_by","maint_status"],
+      orderByFields:["event_date DESC"], num:40}),
+    layers.issues.queryFeatures({where:"1=1",
+      outFields:["asset_equipment_id","issue_severity","issue_desc","issue_status","reported_date","reported_by"],
+      orderByFields:["reported_date DESC"], num:40}),
+    layers.deploy.queryFeatures({where:"1=1",
+      outFields:["asset_equipment_id","incident_id","mobilized_date","returned_date"],
+      orderByFields:["mobilized_date DESC"], num:20}),
+  ]).then(([iF, mF, sF, dF]) => {
+    const ev = [];
+    iF.features.forEach(f => { const a = f.attributes;
+      ev.push({t:a.insp_date, eid:a.asset_equipment_id, who:a.inspector_name,
+        label: tlabel(a.insp_type) + (a.insp_result === "fail" ? " — FAIL" : ""),
+        bad: a.insp_result === "fail"}); });
+    mF.features.forEach(f => { const a = f.attributes;
+      ev.push({t:a.event_date, who:a.performed_by,
+        label: "Maintenance — " + a.equip_id + (a.maint_status === "completed_issues" ? " — FAILED TASKS" : ""),
+        bad: a.maint_status === "completed_issues"}); });
+    sF.features.forEach(f => { const a = f.attributes;
+      ev.push({t:a.reported_date, eid:a.asset_equipment_id, who:a.reported_by,
+        label: (a.issue_status === "resolved" ? "Issue resolved — " : "Issue opened — ")
+          + stripTags(a.issue_desc).slice(0, 70),
+        bad: a.issue_severity === "critical" && a.issue_status !== "resolved"}); });
+    dF.features.forEach(f => { const a = f.attributes;
+      ev.push({t:a.mobilized_date, eid:a.asset_equipment_id, label:"Mobilized to " + (a.incident_id||"incident")});
+      if (a.returned_date) ev.push({t:a.returned_date, eid:a.asset_equipment_id,
+        label:"Returned from " + (a.incident_id||"incident")}); });
+    activity = ev.filter(e => e.t).sort((p, q) => q.t - p.t);
+  }).catch(() => { activity = []; })
+    .then(() => { if ($("statsPanel").classList.contains("active")) buildStats(); });
+}
 function buildStats(){
   const regionOf = x => x.attrs.hazmat_manager || "Unassigned";
   const worstOf = x => { const s = x.worst ? x.worst.sched_status : "none";
@@ -1636,6 +1835,17 @@ function buildStats(){
     <div class="legend">${SEGS.map(([k,l]) => `<span><span class="dot" style="background:${COLORS[k]}"></span>${l}</span>`).join("")}</div>
     <div class="rchart">${rows}</div>
     <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Worst clock per asset · statuses recomputed nightly · tap a card or region to drill in</div>
+    <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin:16px 0 4px">Recent activity</div>
+    <div style="margin:0 -12px">${
+      !Array.isArray(activity) ? "<div class='cd' style='padding:6px 12px'>Loading…</div>"
+      : (activity.filter(e => !statsRegion || (e.eid && byId[e.eid] &&
+            (byId[e.eid].attrs.hazmat_manager || "Unassigned") === statsRegion))
+          .slice(0, 25).map(e =>
+        `<div class="row" ${e.eid && byId[e.eid] ? `data-eid="${e.eid}"` : ""} style="padding:7px 12px">
+          <div><div class="t" style="${e.bad ? "color:var(--bad)" : ""}">${esc(e.label)}</div>
+          <div class="s">${e.eid || ""}${e.who ? " · " + esc(e.who) : ""}</div></div>
+          <div class="due">${fmtDate(e.t)}</div></div>`).join("")
+        || "<div class='cd' style='padding:6px 12px'>No recent activity</div>")}</div>
     <div style="margin-top:12px"><a href="#" id="statsInstr" style="color:var(--deployed);font-size:12.5px;font-weight:600">Inspection &amp; maintenance instructions →</a></div>`;
 
   $("statsInstr").onclick = e => { e.preventDefault();
@@ -1670,6 +1880,7 @@ function buildStats(){
     };
   });
 
+  loadActivity();
   if (openIssues === null){
     openIssues = "pending";
     layers.issues.queryFeatures({where:"issue_status IN ('open','in_progress')",
