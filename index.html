@@ -17,12 +17,12 @@
   }
   html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;overflow:hidden}
   #app{display:grid;grid-template-rows:48px 1fr;height:100%;height:100dvh}
-  header{display:flex;align-items:center;gap:10px;padding:0 12px;background:var(--surface);border-bottom:2px solid var(--accent)}
-  header h1{font-size:15px;font-weight:700}
+  header{display:flex;align-items:center;gap:10px;padding:0 calc(12px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left));background:var(--surface);border-bottom:2px solid var(--accent);min-width:0}
+  header h1{font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
   header .logochip{background:#fff;border-radius:6px;padding:3px 7px;display:flex;align-items:center;flex:none}
   header .logochip img{height:18px;display:block}
   header .beta{font-size:10px;background:var(--accent);padding:2px 6px;border-radius:4px;font-weight:700}
-  header .who{margin-left:auto;font-size:12px;color:var(--text-dim)}
+  header .who{margin-left:auto;font-size:12px;color:var(--text-dim);max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #main{display:grid;grid-template-columns:340px 1fr;min-height:0}
   #panel{display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--border);min-height:0}
   #tabs{display:flex;border-bottom:1px solid var(--border)}
@@ -105,6 +105,11 @@
   #mtabs{display:none}
   @media(max-width:760px){
     #main{grid-template-columns:1fr}
+    /* small phones: drop the username so the WRI button never overflows */
+    header{gap:8px}
+    header h1{font-size:14px}
+    header .who{display:none}
+    header .wri{margin-left:auto}
     /* bottom tab bar replaces the top strip + FAB on phones */
     #tabs{display:none}
     #mtabs{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:45;background:var(--surface);border-top:2px solid var(--accent);padding-bottom:env(safe-area-inset-bottom)}
@@ -242,8 +247,8 @@
   <div class="sec closed" id="secHist"><h3>History</h3><div id="dHist" style="font-size:13px;color:var(--text-dim)">Loading…</div></div>
   <div class="sec"><h3>Identity</h3><div><div class="kv" id="dIdent"></div>
     <a href="#" id="lnkInv">View up-to-date inventory &#8594;</a></div></div>
-  <div class="sec"><h3>Equipment aboard</h3><div id="dEquip"></div></div>
   <div class="sec"><h3>Notes &amp; what to bring</h3><div id="dNotes" style="font-size:13px;color:var(--text-dim)">—</div></div>
+  <div class="sec"><h3>Photos</h3><div id="dPhotos" style="font-size:13px;color:var(--text-dim)">—</div></div>
 </div>
 <div id="overlay">
   <div class="ohd">
@@ -315,6 +320,10 @@ const TYPE_LABEL = {
   ics_trailer_maint:"ICS Trailer Maint", hyd_reel_trailer_maint:"Hydraulic Reel Trailer Maint",
 };
 const tlabel = t => TYPE_LABEL[t] || title(t);
+// display grouping (client 2026-07-21): three compliance lines — DOT, Tire
+// Replacement, and Audit (inventory, ID checks, equipment maintenance, etc.)
+const CLOCK_GROUP = t => (t === "dot_inspection" || t === "bit_inspection") ? "DOT"
+  : t === "tire_replacement" ? "Tire Replacement" : "Audit";
 // Same category cleanup the tailored inventory survey applies at build time
 const catLabel = c => String(c||"Other items").split("(")[0].trim() || "Other items";
 
@@ -425,7 +434,9 @@ async function boot(){
     const x = byId[qp.trim()] || byId[qp.trim().toUpperCase()];
     if (x){
       select(x.attrs.equipment_id, true);
-      if (params.get("view") === "inventory") showInventory();  // QR: straight to inventory
+      if (params.get("view") === "inventory") showInventory();      // QR1: live inventory
+      else if (params.get("view") === "audit" &&
+               (ASSET_SURVEYS[x.attrs.equipment_id]||{}).audit) openGuide();  // QR2: audit guide
     }
     else toast("Asset " + qp + " not found");
   }
@@ -485,7 +496,7 @@ function renderList(items){
     return `<div class="row ${selected===a.equipment_id?"sel":""}" data-eid="${a.equipment_id}">
       <span class="dot" style="background:${x.color}"></span>
       <div><div class="t">${a.equipment_id}</div><div class="s">${title(a.asset_type)} · ${(a.current_warehouse||a.staging_desc||"").split(" - ").pop()||""}</div></div>
-      <div class="due">${w ? tlabel(w.sched_type)+"<br>"+fmtDate(w.due_date) : "no clocks"}</div>
+      <div class="due">${w ? CLOCK_GROUP(w.sched_type)+"<br>"+fmtDate(w.due_date) : "no clocks"}</div>
     </div>`;
   }).join("");
   $("list").querySelectorAll(".row").forEach(r => r.onclick = () => select(r.dataset.eid, true));
@@ -500,11 +511,18 @@ function select(eid, zoom){
   const a = x.attrs;
   $("dTitle").textContent = a.equipment_id;
   $("dSub").innerHTML = `${title(a.asset_type)} · ${badge(a.asset_status==="deployed"?"deployed":(x.worst?x.worst.sched_status:"none"))}`;
-  $("dClocks").innerHTML = x.clocks.length ? x.clocks.map(c =>
-    `<div class="clock"><span class="dot" style="background:${COLORS[c.sched_status]||COLORS.none}"></span>
-     <div class="cn">${tlabel(c.sched_type)}${c._via?`<div class="cd">on ${c._via}</div>`:""}
-     ${c.sched_source==="derived"?`<div class="cd">derived date</div>`:""}</div>
-     <div class="cd">due ${fmtDate(c.due_date)}</div></div>`).join("") : "<div style='color:var(--text-muted);font-size:13px'>No clocks on record</div>";
+  const cgroups = {};
+  x.clocks.forEach(c => { const g = CLOCK_GROUP(c.sched_type);
+    (cgroups[g] = cgroups[g] || []).push(c); });  // x.clocks sorted worst-first
+  $("dClocks").innerHTML = x.clocks.length
+    ? ["DOT","Tire Replacement","Audit"].filter(g => cgroups[g]).map(g => {
+        const w = cgroups[g][0];
+        const sub = g === "Audit"
+          ? `<div class="cd">${cgroups[g].length} check${cgroups[g].length>1?"s":""} — inventory, ID, equipment maintenance</div>` : "";
+        return `<div class="clock"><span class="dot" style="background:${COLORS[w.sched_status]||COLORS.none}"></span>
+          <div class="cn">${g}${sub}</div><div class="cd">due ${fmtDate(w.due_date)}</div></div>`;
+      }).join("")
+    : "<div style='color:var(--text-muted);font-size:13px'>No clocks on record</div>";
   const mgr = a.hazmat_manager, mc = REGION_CONTACT[mgr];
   const regionRow = mgr ? `<span class="dot" style="background:${REGION_COLORS[mgr]||"#666"};display:inline-block;margin-right:5px"></span>${REGION_LABEL[mgr]||mgr}` : null;
   const mgrRow = mc ? `${mgr} · <a href="tel:${mc.cell}" style="color:var(--deployed)">${mc.cell}</a> · <a href="mailto:${mc.email}" style="color:var(--deployed)">email</a>` : null;
@@ -515,10 +533,6 @@ function select(eid, zoom){
     ["VIN",a.vin],["Plate",[a.plate_number,a.plate_state].filter(Boolean).join(" ")],
     ["Tire year",a.tire_mfg_year],["GPS #",a.gps_tracking_num],["Holman",a.holman_no]];
   $("dIdent").innerHTML = kv.filter(p=>p[1]).map(p=>`<div class="k">${p[0]}</div><div>${p[1]}</div>`).join("");
-  $("dEquip").innerHTML = x.equip.length ? x.equip.map(e => {
-    const btn = ` <a href="#" onclick="openMaint('${maintKind(e.equip_type)}','${String(e.GlobalID).replace(/[{}]/g,"")}','${(e.equip_id||"").replace(/'/g,"")}');return false" style="color:var(--warn);font-size:11.5px;font-weight:700">Log maintenance →</a>`;
-    return `<div class="eq"><b>${e.equip_id}</b>${btn}<div class="et">${title(e.equip_type)}${e.serial_num?" · SN "+e.serial_num:""}</div></div>`;
-  }).join("") : "<div style='color:var(--text-muted);font-size:13px'>None linked (see parent-inference review)</div>";
   // Only offer the audits this asset's schedules actually call for (e.g. capping
   // kits get Audit Inventory but never DOT); category is the no-clock fallback
   const hasClock = t => x.clocks.some(c => c.sched_type === t);
@@ -531,6 +545,7 @@ function select(eid, zoom){
   $("auditRow1").style.display = (showDOT || showInv) ? "" : "none";
   $("auditTitle").textContent = (a.asset_category === "trailer" ? "Trailer" : "Asset") + " Audit";
   loadBring(x);
+  loadPhotos(x);
   $("btnMob").textContent = a.asset_status === "deployed" ? "Return from incident" : "Mobilize";
   $("btnMob").className = "btn " + (a.asset_status === "deployed" ? "red" : "blue");
   $("detail").classList.add("open");
@@ -591,7 +606,10 @@ const ASSET_SURVEYS = {
 // button; history entries are pushed so the phone's back gesture works too.
 // Two-level stack: a survey opened FROM the audit guide gets its own entry,
 // so Back returns to the guide (which re-checks status) instead of the map.
-let guideShowing = false;
+// ovDepth is OUR count of overlay history entries (1 = overlay, 2 = child of
+// the guide). Never trust history.state depth for navigation math — embedded
+// S123 iframes push their own entries into the shared history and break it.
+let guideShowing = false, ovDepth = 0;
 function openOverlay(title, opts){
   $("oTitle").textContent = title;
   const fr = $("oFrame"), bd = $("oBody");
@@ -603,15 +621,18 @@ function openOverlay(title, opts){
     fr.src = opts.url;
     $("oExt").href = opts.url; $("oExt").style.display = "inline";
   } else {
-    fr.style.display = "none"; bd.style.display = "block";
+    fr.style.display = "none"; fr.src = "about:blank";  // kill any live embedded app
+    bd.style.display = "block";
     bd.innerHTML = opts.html || "";
     $("oExt").style.display = "none";
   }
   if (!$("overlay").classList.contains("open")){
     history.pushState({wriOverlay: 1}, "");
+    ovDepth = 1;
     $("overlay").classList.add("open");
-  } else if (stack){
-    history.pushState({wriOverlay: ((history.state && history.state.wriOverlay) || 1) + 1}, "");
+  } else if (stack && ovDepth < 2){
+    history.pushState({wriOverlay: 2}, "");
+    ovDepth = 2;
   }
 }
 function closeOverlay(fromPop){
@@ -620,20 +641,27 @@ function closeOverlay(fromPop){
   guideShowing = false;
   $("oFrame").src = "about:blank";
   $("oBody").innerHTML = "";
-  const d = history.state && history.state.wriOverlay;
+  const d = ovDepth; ovDepth = 0;
   if (!fromPop && d) history.go(-d);
 }
 $("oBack").onclick = () => {
-  if (((history.state && history.state.wriOverlay) || 0) > 1) history.back();  // pop to the guide
-  else closeOverlay(false);
+  const x = byId[selected];
+  if (ovDepth > 1 && x && (ASSET_SURVEYS[x.attrs.equipment_id]||{}).audit){
+    // render the guide IMMEDIATELY (never wait on history — iframe entries
+    // can sit between ours), then nudge history back to stay roughly in sync
+    ovDepth = 1;
+    showGuideContent(x);
+    history.back();
+  } else closeOverlay(false);
 };
 window.addEventListener("popstate", e => {
   if (!$("overlay").classList.contains("open")) return;
   if (e.state && e.state.wriOverlay){
-    // landed on the inner overlay layer — that's the audit guide
     const x = byId[selected];
-    if (x && (ASSET_SURVEYS[x.attrs.equipment_id]||{}).audit) showGuideContent(x);
-    else closeOverlay(true);
+    if (x && (ASSET_SURVEYS[x.attrs.equipment_id]||{}).audit){
+      ovDepth = 1;
+      if (!guideShowing) showGuideContent(x);  // child popped -> back to the guide
+    } else closeOverlay(true);
   } else closeOverlay(true);
 });
 
@@ -1001,7 +1029,7 @@ window.launchResolve = async () => {
           insp_type: "audit_resolution", insp_status: "completed", insp_result: "na",
           insp_date: Date.now(), inspector_name: who,
           inspector_affiliation: $("nrAff").value.trim() || null,
-          insp_notes: `Resolution visit: ${rows.length} item(s)`,
+          insp_notes: `Resolution visit: ${rows.length} item(s) — ${rows.map(r => r.desc).join(", ")}`.slice(0, 1000),
           app_version: "viewer-resolve", source_device: "browser"});
         const pg = "{" + String(ins.globalId).replace(/[{}]/g,"") + "}";
         const kids = rowEls.map(el => { const r = rows[+el.dataset.i];
@@ -1474,7 +1502,7 @@ async function processAssetAudit(x){
   const aguid = String(a.GlobalID).replace(/[{}]/g,"");
   const allIssFs = await layers.issues.queryFeatures({
     where:`asset_guid='{${aguid}}' AND source_type='audit'`,
-    outFields:["OBJECTID","issue_severity","issue_desc","issue_status"], num:1000});
+    outFields:["OBJECTID","issue_severity","issue_desc","issue_status","reported_date"], num:1000});
   const allIss = allIssFs.features.map(f => f.attributes);
   const tags = new Set();
   allIss.forEach(i => (i.issue_desc.match(/\[(audit|maint) [0-9a-f]{8}\]/g)||[]).forEach(t => tags.add(t)));
@@ -1537,20 +1565,24 @@ async function processAssetAudit(x){
   // 3. resolutions close matching item issues
   const resFs = await layers.insp.queryFeatures({
     where:`asset_guid='{${aguid}}' AND insp_type='audit_resolution'`,
-    outFields:["GlobalID"], num:20});
-  const resolvedCodes = new Set();
+    outFields:["GlobalID","insp_date"], num:20});
+  // code -> latest resolution date; a resolution only clears issues reported
+  // BEFORE it (an old resolution must not close a later audit's findings)
+  const resolvedCodes = {};
   for (const f of resFs.features){
+    const rd = f.attributes.insp_date || 0;
     const kids = await layers.counts.queryFeatures({
       where:`parentglobalid='{${String(f.attributes.GlobalID).replace(/[{}]/g,"")}}'`,
       outFields:["item_code","count_notes"], num:500});
     kids.features.forEach(kf => {
       if (String(kf.attributes.count_notes||"").startsWith("resolution:yes"))
-        resolvedCodes.add(kf.attributes.item_code); });
+        resolvedCodes[kf.attributes.item_code] =
+          Math.max(resolvedCodes[kf.attributes.item_code] || 0, rd); });
   }
   const isOpen = i => i.issue_status === "open" || i.issue_status === "in_progress";
   allIss.filter(isOpen).forEach(i => {
-    for (const c of resolvedCodes)
-      if (i.issue_desc.includes(`[item ${c}]`)){
+    for (const [c, rd] of Object.entries(resolvedCodes))
+      if (i.issue_desc.includes(`[item ${c}]`) && (i.reported_date || 0) <= rd){
         closes.push({attributes:{OBJECTID:i.OBJECTID, issue_status:"resolved"}});
         i.issue_status = "resolved"; return;
       }
@@ -1572,30 +1604,65 @@ async function processAssetAudit(x){
   if (adds.length || closes.length)
     await layers.issues.applyEdits({addFeatures:adds, updateFeatures:closes});
 
-  // 5. clock: red until no critical remains, then advance once per audit
+  // 5. clock advances — every completed form closes its matching clock;
+  // the audit clock stays red while criticals are open; fails never advance
+  const clockUpdates = [];
+  const advance = (clock, when, byGuid) => {
+    if (!clock || g8s(clock.completed_by_guid) === g8s(byGuid)) return;
+    const months = clock.interval_months || 12;
+    const due = Math.round((when || Date.now()) + months * 30.44 * 86400000);
+    const days = (due - Date.now()) / 86400000;
+    const status = days < 0 ? "overdue" : (days <= 90 ? "due_soon" : "current");
+    clockUpdates.push({attributes:{OBJECTID: clock.OBJECTID, last_completed: when,
+      due_date: due, completed_by_guid: byGuid, sched_status: status}});
+    Object.assign(clock, {last_completed: when, due_date: due,
+      completed_by_guid: byGuid, sched_status: status});
+  };
+  // 5a. audit clock (held by open criticals)
   const latest = audFs.features[0] && audFs.features[0].attributes;
-  if (latest){
-    const critOpen = allIss.some(i => isOpen(i) && i.issue_severity === "critical")
-      || adds.some(ad => ad.attributes.issue_severity === "critical");
-    const clock = x.clocks.find(c => c.sched_type === "audit_inventory" && !c._via);
-    if (!critOpen && clock && g8s(clock.completed_by_guid) !== g8s(latest.GlobalID)){
-      const months = clock.interval_months || 12;
-      const due = (latest.insp_date || Date.now()) + months * 30.44 * 86400000;
-      const days = (due - Date.now()) / 86400000;
-      const status = days < 0 ? "overdue" : (days <= 90 ? "due_soon" : "current");
-      await layers.sched.applyEdits({updateFeatures:[{attributes:{
-        OBJECTID: clock.OBJECTID, last_completed: latest.insp_date,
-        due_date: Math.round(due), completed_by_guid: latest.GlobalID,
-        sched_status: status}}]});
-      clock.last_completed = latest.insp_date; clock.due_date = Math.round(due);
-      clock.completed_by_guid = latest.GlobalID; clock.sched_status = status;
-      x.clocks.sort((p,q) => (SEVERITY[p.sched_status]??9)-(SEVERITY[q.sched_status]??9)
-                          || (p.due_date||9e15)-(q.due_date||9e15));
-      x.worst = x.clocks[0];
-      x.color = a.asset_status === "deployed" ? COLORS.deployed
-              : COLORS[x.worst ? x.worst.sched_status : "none"];
-      drawMarkers(currentListItems());
-    }
+  const critOpen = allIss.some(i => isOpen(i) && i.issue_severity === "critical")
+    || adds.some(ad => ad.attributes.issue_severity === "critical");
+  if (latest && !critOpen)
+    advance(x.clocks.find(c => c.sched_type === "audit_inventory" && !c._via),
+            latest.insp_date, latest.GlobalID);
+  // 5b. details / DOT / BIT inspections
+  const INSP_SCHED = {asset_detail_check:"asset_detail_check",
+                      dot_annual:"dot_inspection", bit_annual:"bit_inspection"};
+  const othFs = await layers.insp.queryFeatures({
+    where:`asset_guid='{${aguid}}' AND insp_type IN ('asset_detail_check','dot_annual','bit_annual')`
+      + ` AND insp_status='completed' AND (app_version LIKE 's123%' OR app_version LIKE 'viewer%')`,
+    outFields:["GlobalID","insp_type","insp_date","insp_result"],
+    orderByFields:["insp_date DESC"], num:30});
+  const bestBy = {};
+  othFs.features.forEach(f => { const r = f.attributes;
+    const st = INSP_SCHED[r.insp_type];
+    if (st && r.insp_result !== "fail" && !bestBy[st]) bestBy[st] = r; });
+  for (const [st, r] of Object.entries(bestBy))
+    advance(x.clocks.find(c => c.sched_type === st && !c._via), r.insp_date, r.GlobalID);
+  // 5c. clean maintenance events close that equipment's maint clock
+  const EQ_SCHED = {generator:"generator_maint", hyd_power_pack:"hpp_maint",
+                    fire_pump:"fire_pump_maint", air_compressor:"compressor_maint"};
+  x.equip.forEach(e => {
+    const st = EQ_SCHED[e.equip_type];
+    if (!st) return;
+    const ev = events.find(v => g8s(v.equip_guid) === g8s(e.GlobalID)
+                             && !evFailed[g8s(v.GlobalID)]);  // events sorted DESC
+    if (!ev) return;
+    advance(x.clocks.find(c => c.sched_type === st && c._via === e.equip_id)
+         || x.clocks.find(c => c.sched_type === st && !c._via), ev.event_date, ev.GlobalID);
+    // hands-on maintenance also verifies the unit: close its ID/detail clocks
+    ["equip_id_verify", "asset_detail_check"].forEach(vt =>
+      advance(x.clocks.find(c => c.sched_type === vt && c._via === e.equip_id),
+              ev.event_date, ev.GlobalID));
+  });
+  if (clockUpdates.length){
+    await layers.sched.applyEdits({updateFeatures: clockUpdates});
+    x.clocks.sort((p,q) => (SEVERITY[p.sched_status]??9)-(SEVERITY[q.sched_status]??9)
+                        || (p.due_date||9e15)-(q.due_date||9e15));
+    x.worst = x.clocks[0];
+    x.color = a.asset_status === "deployed" ? COLORS.deployed
+            : COLORS[x.worst ? x.worst.sched_status : "none"];
+    drawMarkers(currentListItems());
   }
   if (selected === a.equipment_id) select(a.equipment_id, false);  // refresh detail
 }
@@ -1613,7 +1680,10 @@ async function loadHistory(x){
         orderByFields:["insp_date DESC"], num:200});
     inspFs.features.forEach(f => { const a=f.attributes;
       const lbl = tlabel(a.insp_type);
-      events.push({when:a.insp_date, label:(a.insp_type==="other"&&a.insp_notes&&a.insp_notes.includes("(migrated")?a.insp_notes.replace(" (migrated from platform)",""):lbl),
+      const migrated = a.insp_notes && a.insp_notes.includes("(migrated");
+      events.push({when:a.insp_date,
+                   label:(a.insp_type==="other" && migrated ? a.insp_notes.replace(" (migrated from platform)","") : lbl),
+                   note: !migrated && a.insp_notes ? a.insp_notes : null,
                    who:a.inspector_name, issues:a.insp_status==="completed_issues", kind:"Inspection"});
     });
     const eqGuids = x.equip.map(e => "'{"+String(e.GlobalID).replace(/[{}]/g,"")+"}'");
@@ -1631,6 +1701,7 @@ async function loadHistory(x){
     events.sort((p,q) => (q.when||0)-(p.when||0));
     host.innerHTML = events.length ? events.slice(0,40).map(e =>
       `<div class="clock"><div class="cn">${e.label}${e.issues?' <span class="badge" style="background:var(--warn);color:#0a0c10">issues</span>':""}
+       ${e.note?`<div class="cd">${esc(String(e.note).slice(0,110))}</div>`:""}
        ${e.who?`<div class="cd">${e.who}</div>`:""}</div><div class="cd">${fmtDate(e.when)}</div></div>`).join("")
       + (events.length>40?`<div class="cd" style="padding-top:6px">…and ${events.length-40} older records</div>`:"")
       : "No history on record";
@@ -1670,6 +1741,44 @@ async function loadBring(x){
     if (crit.length) $("dSub").insertAdjacentHTML("beforeend",
       ` <span class="badge" id="dAuditChip" style="background:var(--bad);color:#fff">CRITICAL ITEMS OPEN</span>`);
   } catch(e){ console.error(e); }
+}
+
+// ---- Photos: attachments from this asset's inspections + issues, newest first
+async function loadPhotos(x){
+  const host = $("dPhotos");
+  host.textContent = "Loading…";
+  try {
+    const guid = String(x.attrs.GlobalID).replace(/[{}]/g,"");
+    const [iIds, sIds, cred] = await Promise.all([
+      layers.insp.queryObjectIds({where:`asset_guid='{${guid}}'`}),
+      layers.issues.queryObjectIds({where:`asset_guid='{${guid}}'`}),
+      esriId.getCredential(PORTAL + "/sharing"),
+    ]);
+    if (x.attrs.equipment_id !== selected) return;
+    const atts = [];
+    for (const [lyr, ids, base] of [[layers.insp, iIds, SVC + "/2"],
+                                    [layers.issues, sIds, SVC + "/4"]]){
+      if (!ids || !ids.length) continue;
+      const res = await lyr.queryAttachments({objectIds: ids.slice(-100)}).catch(() => ({}));
+      Object.entries(res).forEach(([oid, list]) => (list || []).forEach(at =>
+        atts.push({url: `${base}/${oid}/attachments/${at.id}?token=${cred.token}`,
+                   name: at.name || "", id: at.id})));
+    }
+    if (x.attrs.equipment_id !== selected) return;
+    if (!atts.length){
+      host.innerHTML = "<span style='color:var(--text-muted)'>No photos on record</span>";
+      return;
+    }
+    host.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:8px">` +
+      atts.sort((p,q) => q.id - p.id).slice(0, 24).map(at =>
+        /\.pdf$/i.test(at.name)
+          ? `<a href="${at.url}" target="_blank" rel="noopener" title="${esc(at.name)}"
+              style="width:64px;height:64px;display:flex;align-items:center;justify-content:center;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text-dim);font-size:10px;font-weight:700">PDF</a>`
+          : `<a href="${at.url}" target="_blank" rel="noopener" title="${esc(at.name)}">
+              <img src="${at.url}" loading="lazy" alt=""
+                style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block"></a>`
+      ).join("") + `</div>`;
+  } catch(e){ console.error(e); host.textContent = "Photos unavailable"; }
 }
 
 // tabs
@@ -1812,7 +1921,7 @@ function buildStats(){
         return `<div class="row" data-eid="${a.equipment_id}">
           <span class="dot" style="background:${x.color}"></span>
           <div><div class="t">${a.equipment_id}</div><div class="s">${title(a.asset_type)} · ${(a.current_warehouse||a.staging_desc||"").split(" - ").pop()||""}</div></div>
-          <div class="due">${w ? tlabel(w.sched_type)+"<br>"+fmtDate(w.due_date) : "no clocks"}</div></div>`; }).join("");
+          <div class="due">${w ? CLOCK_GROUP(w.sched_type)+"<br>"+fmtDate(w.due_date) : "no clocks"}</div></div>`; }).join("");
     }
     drill = `<div style="display:flex;align-items:center;gap:10px;margin:2px 0 6px">
       <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)">${DRILL_LABEL[statsDrill]}${statsRegion ? " — " + (REGION_LABEL[statsRegion]||statsRegion) : ""}</div>
