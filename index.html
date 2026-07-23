@@ -842,7 +842,7 @@ async function showInventory(){
   try {
     const [baseFs, inspFs] = await Promise.all([
       layers.baseline.queryFeatures({where:`asset_guid='{${guid}}'`,
-        outFields:["item_category","item_desc","item_code","expected_qty"],
+        outFields:["item_category","item_desc","item_code","expected_qty","modified_date"],
         orderByFields:["OBJECTID"], num:2000}),  // workbook order = survey order
       layers.insp.queryFeatures({where:`asset_guid='{${guid}}' AND insp_type='audit_inventory'`,
         outFields:["GlobalID","insp_date","inspector_name"],
@@ -862,10 +862,17 @@ async function showInventory(){
         if (k) adj[k] = c;
       });
     }
-    let rows = "", lastCat = null, flagged = 0;
-    baseFs.features.forEach(f => { const b = f.attributes;
+    // a baseline correction made AFTER the last count supersedes that count's
+    // adjustment for the row (admin fixes must show immediately)
+    const effAdj = b => {
       const c = adj[String(b.item_code||"").trim().toLowerCase()]
              || adj[String(b.item_desc||"").trim().toLowerCase()];
+      if (c && lastCount && (b.modified_date || 0) > (lastCount.insp_date || 0)) return null;
+      return c;
+    };
+    let rows = "", lastCat = null, flagged = 0;
+    baseFs.features.forEach(f => { const b = f.attributes;
+      const c = effAdj(b);
       const cat = catLabel(b.item_category);
       if (cat !== lastCat){
         rows += `<div class="invcat">${esc(cat)}</div>`;
@@ -896,9 +903,7 @@ async function showInventory(){
       ev.preventDefault();
       const out = [CSV_HEADER];
       baseFs.features.forEach(f => { const b = f.attributes;
-        const c = adj[String(b.item_code||"").trim().toLowerCase()]
-               || adj[String(b.item_desc||"").trim().toLowerCase()];
-        out.push(csvRow(a, b, c, lastCount));
+        out.push(csvRow(a, b, effAdj(b), lastCount));
       });
       downloadCSV(`inventory_${a.equipment_id}_${today()}.csv`, out);
     };
@@ -1182,7 +1187,7 @@ window.openExportCSV = () => {
         base = base.concat(await qPage(layers.baseline,
           `asset_equipment_id IN (${ch.join(",")})`,
           ["asset_equipment_id","item_code","item_desc","item_category","expected_qty",
-           "item_unit","critical_item","replace_qty"], ["asset_equipment_id","OBJECTID"]));
+           "item_unit","critical_item","replace_qty","modified_date"], ["asset_equipment_id","OBJECTID"]));
         stat(`Loading baselines… ${base.length} items`);
       }
       if (!base.length){ stat("No baseline inventory in scope."); $("expGo").disabled = false; return; }
@@ -1214,8 +1219,10 @@ window.openExportCSV = () => {
         const x = byId[b.asset_equipment_id]; if (!x) return;
         const lc = latest[b.asset_equipment_id] || null;
         const adj = adjBy[b.asset_equipment_id] || {};
-        const c = adj[String(b.item_code||"").trim().toLowerCase()]
-               || adj[String(b.item_desc||"").trim().toLowerCase()];
+        let c = adj[String(b.item_code||"").trim().toLowerCase()]
+             || adj[String(b.item_desc||"").trim().toLowerCase()];
+        // baseline corrections newer than the last count supersede it
+        if (c && lc && (b.modified_date || 0) > (lc.insp_date || 0)) c = null;
         if (flagOnly){
           const short = c && c.counted_qty != null && c.counted_qty < (b.expected_qty||0);
           const badCond = c && c.item_condition && c.item_condition !== "good";
