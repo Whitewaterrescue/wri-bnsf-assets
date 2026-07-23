@@ -244,6 +244,10 @@
   <div class="btns" style="padding-top:0">
     <button class="btn gray" id="btnInstr">Inspection &amp; Maintenance Instructions</button>
   </div>
+  <div class="btns" id="adminRow" style="padding-top:0;display:none">
+    <button class="btn gray" id="btnAdmAsset" style="border-color:var(--accent)">Edit asset (admin)</button>
+    <button class="btn gray" id="btnAdmClocks" style="border-color:var(--accent)">Edit clocks</button>
+  </div>
   <div class="sec"><h3>Compliance clocks</h3><div id="dClocks"></div></div>
   <div class="sec closed" id="secHist"><h3>History</h3><div id="dHist" style="font-size:13px;color:var(--text-dim)">Loading…</div></div>
   <div class="sec"><h3>Identity</h3><div><div class="kv" id="dIdent"></div>
@@ -357,6 +361,14 @@ async function boot(){
   await esriId.checkSignInStatus(PORTAL + "/sharing").catch(() => esriId.getCredential(PORTAL + "/sharing"));
   const cred = await esriId.getCredential(PORTAL + "/sharing");
   $("who").textContent = cred.userId;
+  // admin mode: AGOL org admins + named users get full data editing in-app
+  window.isAdmin = false;
+  const ADMIN_USERS = ["cdharris1"];
+  try {
+    const self = await (await fetch(`${PORTAL}/sharing/rest/community/self?f=json&token=${cred.token}`)).json();
+    window.isAdmin = !!self && (self.role === "org_admin" || ADMIN_USERS.includes(self.username));
+  } catch(e){ console.warn("admin check failed", e); }
+  if (window.isAdmin) $("who").textContent = cred.userId + " · admin";
   $("loadMsg").textContent = "Loading fleet…";
 
   const [aF, sF, eF] = await Promise.all([qAll(layers.assets, "*", true), qAll(layers.sched), qAll(layers.equip)]);
@@ -569,6 +581,12 @@ function select(eid, zoom){
       a.tire_mfg_year ? "mfg " + a.tire_mfg_year : null,
       a.tire_mfg_year ? "replace " + (a.tire_mfg_year + 6) : null].filter(Boolean).join(" · ") || a.tire_mfg_year],
     ["Extinguishers",[a.ext_count, a.ext_size].filter(v => v != null && v !== "").join(" × ")],
+    ["Lock code",a.lock_code],["Length",a.asset_length],
+    ["Axles / tires",[a.axle_count, a.tire_count].filter(v => v != null).join(" / ")],
+    ["Contains",a.cap_tags],
+    ["Boom aboard",a.cap_boom_ft != null ? a.cap_boom_ft + " ft" : null],
+    ["Skimmer EDRC",a.cap_skimmer_edrc ? a.cap_skimmer_edrc + " bbl/day" : null],
+    ["Storage",a.cap_storage_bbl ? Math.round(a.cap_storage_bbl * 42).toLocaleString() + " gal" : null],
     ["GPS #",a.gps_tracking_num],["Holman",a.holman_no]];
   $("dIdent").innerHTML = kv.filter(p=>p[1]).map(p=>`<div class="k">${p[0]}</div><div>${p[1]}</div>`).join("");
   // Only offer the audits this asset's schedules actually call for (e.g. capping
@@ -580,6 +598,7 @@ function select(eid, zoom){
     || (!x.clocks.length && ["trailer","kit","container","cache","railcar"].includes(a.asset_category));
   $("btnInsp").style.display = showDOT ? "" : "none";
   $("btnCount").style.display = showInv ? "" : "none";
+  $("adminRow").style.display = window.isAdmin ? "" : "none";
   // asset-level maintenance grids (comms/ice/boom reel/airboat) when that clock exists
   const mkinds = Object.keys(ASSET_MAINT).filter(hasClock);
   const am = $("auditMaint");
@@ -784,9 +803,12 @@ async function showInventory(){
       ${baseFs.features.length} line items
       ${lastCount ? ` · adjusted by count ${fmtDate(lastCount.insp_date)}${lastCount.inspector_name?" ("+esc(lastCount.inspector_name)+")":""}` : " · baseline only — no counts recorded yet"}
       ${flagged ? ` · <b style="color:var(--warn)">${flagged} flagged</b>` : ""}
-      · <a href="#" id="invCsv" style="color:var(--deployed);font-weight:600">Download CSV</a></div>`;
+      · <a href="#" id="invCsv" style="color:var(--deployed);font-weight:600">Download CSV</a>
+      ${window.isAdmin ? ` · <a href="#" id="invAdm" style="color:var(--accent);font-weight:600">Admin: edit items</a>` : ""}</div>`;
     $("oBody").innerHTML = baseFs.features.length ? hdr + rows
       : "No baseline inventory on file — run an Audit Inventory count to establish one.";
+    const admLink = $("invAdm");
+    if (admLink) admLink.onclick = ev => { ev.preventDefault(); openAdminBaseline(); };
     const csvLink = $("invCsv");
     if (csvLink) csvLink.onclick = ev => {   // data already on screen — no re-query
       ev.preventDefault();
@@ -800,6 +822,222 @@ async function showInventory(){
     };
   } catch(e){ console.error(e); $("oBody").innerHTML = "Inventory unavailable: " + (e.message||e); }
 }
+
+// ================= admin editors (org admins + ADMIN_USERS) =================
+// [field, label, kind]  kind: text | int | num | date | area
+const ADMIN_FIELDS = [
+  ["asset_name","Asset name","text"],["asset_status","Status (available/deployed/…)","text"],
+  ["asset_category","Category","text"],["asset_type","Type","text"],
+  ["organization","Organization","text"],["bnsf_territory","BNSF territory","text"],
+  ["wri_region","WRI region","text"],["hazmat_manager","Hazmat manager","text"],
+  ["contractor_name","Contractor","text"],["current_warehouse","Current warehouse","text"],
+  ["base_warehouse","Base warehouse","text"],["staging_desc","Address / staging","text"],
+  ["checked_out_to","Checked out to","text"],["lock_code","Lock code","text"],
+  ["vin","VIN","text"],["plate_number","Plate number","text"],["plate_state","Plate state","text"],
+  ["registration_type","Registration type","text"],["tab_exp_date","Tab expiration","date"],
+  ["holman_no","Holman no","text"],["gps_tracking_num","GPS tracking #","text"],
+  ["asset_length","Length","text"],["axle_count","Axle count","int"],
+  ["tire_count","Tire count","int"],["tire_size","Tire size","text"],
+  ["tire_model","Tire model","text"],["tire_load_range","Tire load range","text"],
+  ["tire_mfg_year","Tire mfg year","int"],["tire_replace_due","Tire replace due","date"],
+  ["hitch_ball_size","Hitch ball size","text"],["ext_count","Extinguisher count","int"],
+  ["ext_size","Extinguisher size","text"],["ext_insp_due","Extinguisher insp due","date"],
+  ["dot_insp_due","DOT insp due","date"],["cap_tags","Capability tags","text"],
+  ["cap_boom_ft","Boom footage aboard","num"],["cap_skimmer_edrc","Skimmer EDRC (bbl/day)","num"],
+  ["cap_storage_bbl","Storage capacity (bbl)","num"],["geocode_review","Geocode review (yes/no)","text"],
+  ["asset_notes","Notes / access","area"],
+];
+const dstr = ms => ms ? new Date(ms).toISOString().slice(0,10) : "";
+const dms = s => s ? Date.parse(s + "T12:00:00") : null;
+
+window.openAdminAsset = () => {
+  const x = byId[selected]; if (!x || !window.isAdmin) return;
+  const a = x.attrs;
+  openOverlay("Edit Asset (admin) — " + a.equipment_id, {html:
+    `<div class="cd" style="margin-bottom:8px">Writes straight to the assets layer.
+     Blank a field to clear it. equipment_id is not editable (it keys clocks and relationships).</div>` +
+    ADMIN_FIELDS.map(([f, lbl, kind]) => {
+      const v = a[f];
+      if (kind === "area") return `<div class="cd" style="margin-top:6px">${lbl}</div>
+        <textarea class="nfin" data-adm="${f}" style="min-height:80px">${esc(v||"")}</textarea>`;
+      const val = kind === "date" ? dstr(v) : (v ?? "");
+      const typ = kind === "date" ? "date" : (kind === "int" || kind === "num" ? "number" : "text");
+      return `<div class="cd" style="margin-top:6px">${lbl}</div>
+        <input class="nfin" data-adm="${f}" data-kind="${kind}" type="${typ}"
+          ${kind === "num" ? 'step="any"' : ""} value="${esc(String(val))}">`;
+    }).join("") +
+    `<button class="btn red" id="admSave" style="width:100%;margin:14px 0">Save asset</button>`});
+  $("admSave").onclick = async () => {
+    $("admSave").disabled = true;
+    try {
+      const upd = {};
+      $("oBody").querySelectorAll("[data-adm]").forEach(el => {
+        const f = el.dataset.adm, kind = el.dataset.kind || "area";
+        let v = el.value.trim();
+        if (kind === "date") v = dms(v);
+        else if (kind === "int") v = v === "" ? null : parseInt(v, 10);
+        else if (kind === "num") v = v === "" ? null : parseFloat(v);
+        else v = v === "" ? null : v;
+        if (v !== (a[f] ?? null) && !(v == null && a[f] == null)) upd[f] = v;
+      });
+      if (!Object.keys(upd).length){ toast("No changes"); $("admSave").disabled = false; return; }
+      const r = await layers.assets.applyEdits({updateFeatures:[{attributes:
+        Object.assign({OBJECTID: a.OBJECTID}, upd)}]});
+      const r0 = (r.updateFeatureResults || [])[0];
+      if (!r0 || r0.error) throw new Error(r0 && r0.error ? r0.error.message : "update failed");
+      Object.assign(a, upd);
+      toast(Object.keys(upd).length + " field(s) saved");
+      history.back();
+      select(a.equipment_id, false);
+    } catch(e){ console.error(e); toast("Save failed: " + (e.message||e)); $("admSave").disabled = false; }
+  };
+};
+
+window.openAdminClocks = () => {
+  const x = byId[selected]; if (!x || !window.isAdmin) return;
+  const a = x.attrs;
+  openOverlay("Edit Clocks (admin) — " + a.equipment_id, {html:
+    `<div class="cd" style="margin-bottom:8px">Direct clock surgery — the processor recomputes
+     status nightly from due dates, so usually set the dates and leave status alone.</div>` +
+    (x.clocks.map((c, i) => `
+      <div class="invcat">${tlabel(c.sched_type)}${c._via ? " — " + esc(c._via) : ""}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <label class="cd">Last completed<input class="nfin" type="date" data-ck="${i}" data-f="last_completed" value="${dstr(c.last_completed)}" style="margin:2px 0 0"></label>
+        <label class="cd">Due<input class="nfin" type="date" data-ck="${i}" data-f="due_date" value="${dstr(c.due_date)}" style="margin:2px 0 0"></label>
+        <label class="cd">Interval (months)<input class="nfin" type="number" data-ck="${i}" data-f="interval_months" value="${c.interval_months ?? ""}" style="margin:2px 0 0"></label>
+        <label class="cd">Status<select class="nfin" data-ck="${i}" data-f="sched_status" style="margin:2px 0 0">
+          ${["current","due_soon","overdue","suspended"].map(s =>
+            `<option value="${s}"${c.sched_status === s ? " selected" : ""}>${title(s)}</option>`).join("")}
+        </select></label>
+      </div>`).join("") || "No clocks on record.") +
+    (x.clocks.length ? `<button class="btn red" id="ckSave" style="width:100%;margin:14px 0">Save clocks</button>` : "")});
+  const sv = $("ckSave");
+  if (sv) sv.onclick = async () => {
+    sv.disabled = true;
+    try {
+      const ups = [];
+      x.clocks.forEach((c, i) => {
+        const upd = {};
+        $("oBody").querySelectorAll(`[data-ck="${i}"]`).forEach(el => {
+          const f = el.dataset.f;
+          let v = el.value;
+          if (f === "last_completed" || f === "due_date") v = dms(v);
+          else if (f === "interval_months") v = v === "" ? null : parseInt(v, 10);
+          if (v !== (c[f] ?? null) && !(v == null && c[f] == null)) upd[f] = v;
+        });
+        if (Object.keys(upd).length) ups.push({c, attrs: Object.assign({OBJECTID: c.OBJECTID}, upd)});
+      });
+      if (!ups.length){ toast("No changes"); sv.disabled = false; return; }
+      const r = await layers.sched.applyEdits({updateFeatures: ups.map(u => ({attributes: u.attrs}))});
+      const bad = (r.updateFeatureResults || []).filter(q => q.error);
+      if (bad.length) throw new Error(bad[0].error.message);
+      ups.forEach(u => Object.assign(u.c, u.attrs));
+      x.clocks.sort((p,q) => (SEVERITY[p.sched_status]??9)-(SEVERITY[q.sched_status]??9)
+                          || (p.due_date||9e15)-(q.due_date||9e15));
+      x.worst = x.clocks[0];
+      x.color = a.asset_status === "deployed" ? COLORS.deployed
+              : COLORS[x.worst ? x.worst.sched_status : "none"];
+      toast(ups.length + " clock(s) saved");
+      history.back();
+      select(a.equipment_id, false);
+      drawMarkers(currentListItems());
+    } catch(e){ console.error(e); toast("Save failed: " + (e.message||e)); sv.disabled = false; }
+  };
+};
+
+window.openAdminBaseline = async () => {
+  const x = byId[selected]; if (!x || !window.isAdmin) return;
+  const a = x.attrs;
+  const guid = String(a.GlobalID).replace(/[{}]/g,"");
+  openOverlay("Edit Inventory (admin) — " + a.equipment_id,
+              {html:"<div style='color:var(--text-dim)'>Loading…</div>"});
+  try {
+    const fs = await layers.baseline.queryFeatures({where:`asset_guid='{${guid}}'`,
+      outFields:["OBJECTID","item_code","item_desc","item_category","expected_qty",
+                 "item_unit","critical_item","replace_qty","baseline_notes"],
+      orderByFields:["OBJECTID"], num:2000});
+    const rows = fs.features.map(f => f.attributes);
+    const deleted = new Set();
+    const rowHtml = (b, i) => `
+      <div class="audadd" data-bi="${i}" style="display:flex;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);flex-wrap:wrap">
+        <input type="text" class="nfin" data-bf="item_desc" value="${esc(b.item_desc||"")}" style="flex:2;min-width:150px;margin:0">
+        <input type="number" step="any" class="nfin" data-bf="expected_qty" value="${b.expected_qty ?? ""}" title="Expected qty" style="width:64px;flex:none;margin:0">
+        <label class="cd" style="flex:none;display:flex;gap:4px;align-items:center">crit
+          <input type="checkbox" data-bf="critical_item" ${b.critical_item === "yes" ? "checked" : ""}></label>
+        <input type="number" step="any" class="nfin" data-bf="replace_qty" value="${b.replace_qty ?? ""}" title="Replace-at qty" placeholder="repl@" style="width:64px;flex:none;margin:0">
+        <button class="btn gray" style="flex:none;padding:6px 10px" data-bdel="${i}">✕</button>
+      </div>`;
+    $("oBody").innerHTML =
+      `<div class="cd" style="margin-bottom:6px">${rows.length} baseline items — qty, critical flag,
+       replace-at threshold and description are editable. ✕ marks a row for deletion; Save commits everything.</div>`
+      + rows.map(rowHtml).join("")
+      + `<button class="btn gray" id="blAdd" style="width:100%;margin:8px 0 2px">+ Add item</button>
+         <div id="blNew"></div>
+         <button class="btn red" id="blSave" style="width:100%;margin:12px 0">Save inventory</button>`;
+    $("oBody").querySelectorAll("[data-bdel]").forEach(btn => btn.onclick = () => {
+      const i = +btn.dataset.bdel;
+      deleted.has(i) ? deleted.delete(i) : deleted.add(i);
+      btn.closest(".audadd").style.opacity = deleted.has(i) ? 0.35 : 1;
+      btn.textContent = deleted.has(i) ? "↺" : "✕";
+    });
+    $("blAdd").onclick = () => {
+      const d = document.createElement("div");
+      d.className = "audadd blnew";
+      d.style.cssText = "display:flex;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);flex-wrap:wrap";
+      d.innerHTML = `<input type="text" class="nfin" data-bf="item_desc" placeholder="Item description" style="flex:2;min-width:150px;margin:0">
+        <input type="number" step="any" class="nfin" data-bf="expected_qty" placeholder="Qty" style="width:64px;flex:none;margin:0">
+        <label class="cd" style="flex:none;display:flex;gap:4px;align-items:center">crit
+          <input type="checkbox" data-bf="critical_item"></label>
+        <input type="number" step="any" class="nfin" data-bf="replace_qty" placeholder="repl@" style="width:64px;flex:none;margin:0">
+        <button class="btn gray" style="flex:none;padding:6px 10px" onclick="this.closest('.blnew').remove();return false">✕</button>`;
+      $("blNew").appendChild(d);
+    };
+    $("blSave").onclick = async () => {
+      $("blSave").disabled = true;
+      try {
+        const val = (host, f) => {
+          const el = host.querySelector(`[data-bf="${f}"]`);
+          if (f === "critical_item") return el.checked ? "yes" : "no";
+          const v = el.value.trim();
+          return f === "item_desc" ? v : (v === "" ? null : parseFloat(v));
+        };
+        const updates = [], dels = [];
+        $("oBody").querySelectorAll("[data-bi]").forEach(host => {
+          const i = +host.dataset.bi, b = rows[i];
+          if (deleted.has(i)){ dels.push(b.OBJECTID); return; }
+          const upd = {};
+          ["item_desc","expected_qty","critical_item","replace_qty"].forEach(f => {
+            const v = val(host, f);
+            if (v !== (b[f] ?? null) && !(v == null && b[f] == null)) upd[f] = v;
+          });
+          if (Object.keys(upd).length)
+            updates.push({attributes: Object.assign({OBJECTID: b.OBJECTID}, upd)});
+        });
+        const stamp = new Date().toISOString().slice(2,10).replace(/-/g,"");
+        const adds = [...$("oBody").querySelectorAll(".blnew")].map((host, n) => {
+          const desc = val(host, "item_desc");
+          if (!desc) return null;
+          return {attributes:{asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
+            item_code: `AD-${stamp}-${n+1}`, item_desc: desc.slice(0,255),
+            item_category: "Trailer Contents", expected_qty: val(host, "expected_qty") ?? 1,
+            item_unit: "each", critical_item: val(host, "critical_item"),
+            replace_qty: val(host, "replace_qty"), baseline_source: "admin-edit",
+            baseline_notes: "added via admin editor " + new Date().toLocaleDateString()}};
+        }).filter(Boolean);
+        if (!updates.length && !adds.length && !dels.length){
+          toast("No changes"); $("blSave").disabled = false; return;
+        }
+        const r = await layers.baseline.applyEdits(
+          {updateFeatures: updates, addFeatures: adds, deleteFeatures: dels.map(o => ({objectId: o}))});
+        const bad = ["updateFeatureResults","addFeatureResults","deleteFeatureResults"]
+          .flatMap(k => r[k] || []).filter(q => q.error);
+        if (bad.length) throw new Error(bad[0].error.message);
+        toast(`Saved — ${updates.length} edited, ${adds.length} added, ${dels.length} deleted`);
+        history.back();
+      } catch(e){ console.error(e); toast("Save failed: " + (e.message||e)); $("blSave").disabled = false; }
+    };
+  } catch(e){ console.error(e); $("oBody").innerHTML = "Failed to load: " + (e.message||e); }
+};
 
 // ---- CSV inventory export (per-asset above; fleet dialog honors the filters) ----
 const today = () => new Date().toISOString().slice(0,10);
@@ -910,6 +1148,8 @@ window.openExportCSV = () => {
   };
 };
 $("lnkInv").onclick = e => { e.preventDefault(); showInventory(); };
+$("btnAdmAsset").onclick = () => openAdminAsset();
+$("btnAdmClocks").onclick = () => openAdminClocks();
 $("btnInstr").onclick = () => openOverlay("Inspection & Maintenance Instructions", {url:"instructions.html"});
 $("btnInsp").onclick = () => openNativeDOT();
 // every audit-capable asset gets the guided flow — the native audit table
@@ -1551,7 +1791,12 @@ window.openNativeDetails = () => {
        <option value="">Tire load range — select</option>
        ${["B","C","D","E","F","G"].map(v =>
          `<option value="${v}"${(a.tire_load_range || "") === v ? " selected" : ""}>Load range ${v}${v === "E" ? " (standard)" : ""}</option>`).join("")}
-     </select>` : ""}
+     </select>
+     <input id="ndLen" type="text" class="nfin" placeholder="Asset length (e.g. 20 ft)" value="${esc(a.asset_length || "")}">
+     <input id="ndAxles" type="number" inputmode="numeric" class="nfin" placeholder="Axle count" value="${a.axle_count ?? ""}">
+     <input id="ndTires" type="number" inputmode="numeric" class="nfin" placeholder="Tire count (incl. spare)" value="${a.tire_count ?? ""}">` : ""}
+     <div class="invcat">Access</div>
+     <input id="ndLock" type="text" class="nfin" placeholder="Lock / gate code" value="${esc(a.lock_code || "")}">
      <div class="invcat">Fire extinguishers aboard</div>
      <input id="ndExtN" type="number" inputmode="numeric" class="nfin"
        placeholder="How many?" value="${a.ext_count ?? ""}">
@@ -1584,7 +1829,13 @@ window.openNativeDetails = () => {
         if (ty >= 1990 && ty <= 2100) put("tire_mfg_year", ty);
         put("tire_size", $("ndTireSize").value.trim());
         put("tire_load_range", $("ndTireLR").value);
+        put("asset_length", $("ndLen").value.trim());
+        const ax = parseInt($("ndAxles").value, 10);
+        if (ax >= 0) put("axle_count", ax);
+        const tc = parseInt($("ndTires").value, 10);
+        if (tc >= 0) put("tire_count", tc);
       }
+      put("lock_code", $("ndLock").value.trim());
       const en = parseInt($("ndExtN").value, 10);
       if (!isNaN(en) && en >= 0) put("ext_count", en);
       put("ext_size", $("ndExtSize").value.trim());
@@ -1874,6 +2125,11 @@ window.openNativeAudit = async () => {
       <div style="display:flex;gap:8px;font-size:11px;color:var(--text-muted);padding:4px 0;text-transform:uppercase;letter-spacing:.05em">
         <div style="flex:1">Contents</div><div style="width:52px;text-align:right">Expect</div><div style="width:72px;text-align:center">Actual</div></div>
       ${rowsHtml}
+      <div class="invcat">Items found that are NOT on the list</div>
+      <div id="audAdds"></div>
+      <button class="btn gray" id="audAddBtn" style="width:100%;margin:4px 0 2px">+ Add an item</button>
+      <div class="cd">Added items are recorded on this audit AND join the asset's expected
+      inventory going forward.</div>
       <div class="invcat">Photos — all 3 required</div>
       ${phSlots.map(([k, lbl]) => `
         <label class="phslot" id="ph_${k}" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
@@ -1918,6 +2174,28 @@ window.openNativeAudit = async () => {
           + "<b>All 3 photos are required before you can submit.</b> "
           + "Entries are lost if you leave this page before submitting.";
     };
+    $("audAddBtn").onclick = () => {
+      const n = $("audAdds").children.length;
+      const row = document.createElement("div");
+      row.className = "audadd";
+      row.style.cssText = "display:flex;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);flex-wrap:wrap";
+      row.innerHTML = `
+        <input type="text" class="nfin" placeholder="Item description" data-ad="desc" style="flex:2;min-width:150px;margin:0">
+        <input type="number" inputmode="decimal" class="nfin" placeholder="Qty" data-ad="qty" style="width:64px;flex:none;margin:0">
+        <select data-ad="cond" class="nfin" style="width:100px;flex:none;margin:0">
+          <option value="good">Good</option><option value="worn">Worn</option>
+          <option value="damaged">Damaged</option><option value="expired">Expired</option></select>
+        <input type="text" class="nfin" placeholder="Notes / where stowed" data-ad="note" style="flex:1.5;min-width:120px;margin:0">
+        <button class="btn gray" style="flex:none;padding:6px 10px" onclick="this.closest('.audadd').remove();return false">✕</button>`;
+      $("audAdds").appendChild(row);
+      row.querySelector("[data-ad=desc]").focus();
+    };
+    const addedItems = () => [...$("audAdds").querySelectorAll(".audadd")].map(r => ({
+      desc: r.querySelector("[data-ad=desc]").value.trim(),
+      qty: parseFloat(r.querySelector("[data-ad=qty]").value),
+      cond: r.querySelector("[data-ad=cond]").value,
+      note: r.querySelector("[data-ad=note]").value.trim(),
+    })).filter(t => t.desc && !isNaN(t.qty) && t.qty > 0);
     $("oBody").onchange = e => {
       const slot = e.target.dataset && e.target.dataset.slot;
       if (!slot || !e.target.files || !e.target.files.length) return;
@@ -1956,13 +2234,15 @@ window.openNativeAudit = async () => {
       const {nd, nc} = stat();
       $("audSubmit").disabled = true; $("audSubmit").textContent = "Submitting…";
       try {
+        const newbies = addedItems();
         const result = nc > 0 ? "fail" : (nd > 0 ? "pass_with_issues" : "pass");
         const res = await layers.insp.applyEdits({addFeatures:[{attributes:{
           asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
           insp_type: "audit_inventory", insp_status: "completed", insp_result: result,
           insp_date: Date.now(), inspector_name: who,
           inspector_affiliation: $("audAff").value.trim() || null,
-          insp_notes: `Full audit: ${nd} deviation(s), ${nc} critical.`,
+          insp_notes: `Full audit: ${nd} deviation(s), ${nc} critical.`
+            + (newbies.length ? ` ${newbies.length} new item(s) added to inventory.` : ""),
           app_version: "viewer-audit-v3", source_device: "browser"}}]});
         const ar = res.addFeatureResults[0];
         if (!ar || ar.error) throw new Error(ar && ar.error ? ar.error.message : "insert failed");
@@ -1980,10 +2260,31 @@ window.openNativeAudit = async () => {
             replace_needed: exp - v > 0 ? "yes" : "no",
             count_notes: (isCrit ? "[CRITICAL] " : "") + note}});
         });
+        // items found that aren't on the list: recorded on this audit AND
+        // promoted into the baseline so future audits expect them
+        const stamp = new Date().toISOString().slice(2,10).replace(/-/g,"");
+        newbies.forEach((t, n) => kids.push({attributes:{parentglobalid: pguid,
+          asset_equipment_id: a.equipment_id, item_code: `FA-${stamp}-${n+1}`,
+          item_desc: t.desc.slice(0,255), expected_qty: 0, counted_qty: t.qty,
+          shortage_qty: 0, item_condition: t.cond, replace_needed: "no",
+          count_notes: ("field-added" + (t.note ? " — " + t.note : "")).slice(0,500)}}));
         if (kids.length){
           const kr = await layers.counts.applyEdits({addFeatures: kids});
           const bad = kr.addFeatureResults.filter(r => r.error);
           if (bad.length) throw new Error("deviation rows failed: " + bad[0].error.message);
+        }
+        if (newbies.length){
+          const bl = newbies.map((t, n) => ({attributes:{asset_guid: a.GlobalID,
+            asset_equipment_id: a.equipment_id, item_code: `FA-${stamp}-${n+1}`,
+            item_desc: t.desc.slice(0,255), item_category: "Trailer Contents",
+            expected_qty: t.qty, item_unit: "each", critical_item: "no",
+            baseline_source: "field-added",
+            baseline_notes: (`added by ${who} ${new Date().toLocaleDateString()}`
+              + (t.note ? " — " + t.note : "")).slice(0,500)}}));
+          const br = await layers.baseline.applyEdits({addFeatures: bl})
+            .catch(e => ({addFeatureResults: [{error: e}]}));
+          if ((br.addFeatureResults || []).some(r => r.error))
+            toast("Audit saved, but adding item(s) to the expected inventory failed — tell the office");
         }
         // photos: the audit row is already in — a failed upload must not lose it
         $("audSubmit").textContent = "Uploading photos…";
