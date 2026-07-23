@@ -1760,8 +1760,9 @@ window.openNativeIssue = () => {
           const cred = await esriId.getCredential(PORTAL + "/sharing");
           const fd = new FormData();
           fd.append("attachment", f); fd.append("f", "json"); fd.append("token", cred.token);
-          const up = await fetch(`${SVC}/4/${r.objectId}/addAttachment`, {method:"POST", body:fd})
-            .then(x => x.json());
+          const up = await withTimeout(
+            fetch(`${SVC}/4/${r.objectId}/addAttachment`, {method:"POST", body:fd}).then(x => x.json()),
+            60000, "photo upload");
           if (!(up.addAttachmentResult || {}).success) throw new Error("attach failed");
         } catch(ae){ console.error(ae);
           toast("Issue saved, but the photo failed — attach via the Survey123 form if needed"); }
@@ -1788,6 +1789,12 @@ async function addRow(layer, attributes){
   if (!r || r.error) throw new Error(r && r.error ? r.error.message : "insert failed");
   return r;
 }
+// a stalled upload on weak cellular must fail loudly, never hang the submit
+// (2026-07-23: DOT submits "froze" in Libby — the row was in, the attachment
+// fetch never resolved)
+const withTimeout = (p, ms, what) => Promise.race([p,
+  new Promise((_, rej) => setTimeout(() =>
+    rej(new Error(what + " timed out — poor signal")), ms))]);
 async function uploadInspPhoto(objectId, file, name){
   // REST addAttachment on the inspections table (JS API FeatureLayer has no
   // attachment-add; same pattern as the DOT/issue forms)
@@ -1795,8 +1802,9 @@ async function uploadInspPhoto(objectId, file, name){
   const fd = new FormData();
   fd.append("attachment", file, name);
   fd.append("f", "json"); fd.append("token", cred.token);
-  const up = await fetch(`${SVC}/2/${objectId}/addAttachment`, {method:"POST", body:fd})
-    .then(x => x.json());
+  const up = await withTimeout(
+    fetch(`${SVC}/2/${objectId}/addAttachment`, {method:"POST", body:fd}).then(x => x.json()),
+    60000, "photo upload");
   if (!(up.addAttachmentResult || {}).success) throw new Error(JSON.stringify(up.error || up));
 }
 const nag = el => { el.scrollIntoView({block:"center"}); el.focus(); };
@@ -2191,15 +2199,17 @@ window.openNativeDOT = () => {
       const r = await addRow(layers.insp, attrs);
       const f = $("dtFile").files[0];
       if (f){
+        $("dtSubmit").textContent = "Uploading attachment…";
         try {
           const cred = await esriId.getCredential(PORTAL + "/sharing");
           const fd = new FormData();
           fd.append("attachment", f); fd.append("f", "json"); fd.append("token", cred.token);
-          const up = await fetch(`${SVC}/2/${r.objectId}/addAttachment`, {method:"POST", body:fd})
-            .then(x => x.json());
+          const up = await withTimeout(
+            fetch(`${SVC}/2/${r.objectId}/addAttachment`, {method:"POST", body:fd}).then(x => x.json()),
+            60000, "attachment upload");
           if (!(up.addAttachmentResult || {}).success) throw new Error(JSON.stringify(up.error || up));
         } catch(ae){ console.error(ae);
-          toast("Inspection saved, but the attachment failed — add it via the Survey123 form if needed"); }
+          toast("Inspection SAVED, but the attachment didn't upload — retry it from better signal (do not resubmit the inspection)"); }
       }
       toast("Inspection submitted — " + res.replace(/_/g, " "));
       history.back();
