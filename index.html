@@ -372,6 +372,7 @@ const layers = {
   issues: new FeatureLayer({url: SVC + "/4"}),
   baseline: new FeatureLayer({url: SVC + "/1"}),
   counts: new FeatureLayer({url: SVC + "/3"}),
+  trips: new FeatureLayer({url: SVC + "/12"}),   // per-user active trip
 };
 
 async function qAll(lyr, outFields, geom){
@@ -466,9 +467,23 @@ async function boot(){
   });
 
   buildFilters();
-  // restore an in-progress trip (field crews close the tab between sites)
-  try { activeTrip = (JSON.parse(localStorage.getItem("ar_trip") || "[]") || []).filter(id => byId[id]); }
-  catch(e){ activeTrip = []; }
+  // restore an in-progress trip: this user's server row wins (desktop -> phone),
+  // localStorage is the offline fallback
+  window.__user = cred.userId;
+  try {
+    const tq = await layers.trips.queryFeatures({
+      where:`username='${cred.userId.replace(/'/g,"''")}'`, outFields:["OBJECTID","trip_ids"], num:1});
+    if (tq.features.length){
+      tripRowOID = tq.features[0].attributes.OBJECTID;
+      activeTrip = String(tq.features[0].attributes.trip_ids || "").split(",").filter(id => byId[id]);
+      localStorage.setItem("ar_trip", JSON.stringify(activeTrip));
+    } else {
+      activeTrip = (JSON.parse(localStorage.getItem("ar_trip") || "[]") || []).filter(id => byId[id]);
+    }
+  } catch(e){ console.warn("trip restore fell back to local", e);
+    try { activeTrip = (JSON.parse(localStorage.getItem("ar_trip") || "[]") || []).filter(id => byId[id]); }
+    catch(e2){ activeTrip = []; }
+  }
   syncTripBanner();
   applyViewMode(localStorage.getItem("ar_view") || (window.isAdmin ? "admin" : "inspector"));
   renderList(currentListItems());
@@ -476,8 +491,19 @@ async function boot(){
   setTab(window.viewMode === "inspector" ? "list" : "stats");
   $("loader").style.display = "none";
 
-  // QR / deep link: ?asset=<equipment_id> opens that asset directly
+  // QR / deep link: ?trip=A,B,C loads a trip (printed trip-sheet QR)
   const params = new URLSearchParams(location.search);
+  const tp = params.get("trip");
+  if (tp){
+    const ids = tp.split(",").map(s => s.trim().toUpperCase()).filter(id => byId[id]);
+    if (ids.length){
+      setActiveTrip(ids);
+      setTab("list");
+      renderList(currentListItems());
+      toast(`Trip loaded — ${ids.length} asset${ids.length > 1 ? "s" : ""}`);
+    }
+  }
+  // ?asset=<equipment_id> opens that asset directly
   const qp = params.get("asset");
   if (qp){
     const x = byId[qp.trim()] || byId[qp.trim().toUpperCase()];
@@ -1365,17 +1391,39 @@ window.toggleTripMode = () => {
   renderList(currentListItems());
   tripBarSync();
 };
-// ---- active trip: the built trip keeps scoping the UI until cleared ----
+// ---- active trip: the built trip keeps scoping the UI until cleared.
+// Saved per-user on the service so a trip planned on desktop loads on the
+// same login's phone; localStorage is only the offline cache.
+let tripRowOID = null;
+async function saveTripServer(){
+  if (!window.__user) return;
+  try {
+    const attrs = {username: window.__user, trip_ids: activeTrip.join(","),
+                   updated_date: Date.now(), app_version: "webapp-beta", source_device: "browser"};
+    if (tripRowOID == null){
+      const q = await layers.trips.queryFeatures({
+        where:`username='${window.__user.replace(/'/g,"''")}'`, outFields:["OBJECTID"], num:1});
+      tripRowOID = q.features.length ? q.features[0].attributes.OBJECTID : -1;
+    }
+    if (tripRowOID >= 0)
+      await layers.trips.applyEdits({updateFeatures:[{attributes: Object.assign({OBJECTID: tripRowOID}, attrs)}]});
+    else {
+      const r = await layers.trips.applyEdits({addFeatures:[{attributes: attrs}]});
+      tripRowOID = r.addFeatureResults[0].objectId;
+    }
+  } catch(e){ console.warn("trip save failed", e); }
+}
 function setActiveTrip(ids){
   activeTrip = ids || [];
   localStorage.setItem("ar_trip", JSON.stringify(activeTrip));
   syncTripBanner();
+  saveTripServer();   // fire-and-forget; localStorage covers a failed write
 }
 function syncTripBanner(){
   const el = $("tripActive");
   if (!activeTrip.length){ el.style.display = "none"; el.innerHTML = ""; return; }
   el.style.display = "flex";
-  el.innerHTML = `<span style="flex:1">&#129517; <b>Active trip</b> — ${activeTrip.length} asset${activeTrip.length>1?"s":""}, in visit order</span>
+  el.innerHTML = `<span style="flex:1">&#129517; <b>Active trip</b> — ${activeTrip.length} asset${activeTrip.length>1?"s":""}, in visit order · follows your login</span>
     <button class="btn gray" style="flex:none;padding:6px 10px;font-size:11.5px" id="tripPrint">Trip sheet</button>
     <button class="btn gray" style="flex:none;padding:6px 10px;font-size:11.5px" id="tripClear">Clear ✕</button>`;
   $("tripPrint").onclick = () => buildTripSheet([...activeTrip]);
@@ -1395,6 +1443,7 @@ async function buildTripSheet(eids){
   try {
     const data = [];
     for (const x of xs) data.push({x, ...(await prepFetch(x))});   // few assets — sequential is fine
+    const tripUrl = `${location.origin}${location.pathname}?trip=${encodeURIComponent(eids.join(","))}`;
     const dirLink = x => {
       if (!x.geom) return "";
       const p = x.geom;
@@ -1426,6 +1475,12 @@ async function buildTripSheet(eids){
       <style>${PREP_CSS}</style></head><body>
       ${PRINT_BTN}
       <h1>Inspection Trip Sheet <small>generated ${new Date().toLocaleDateString()} · ${data.length} assets · WRI BNSF Asset Readiness</small></h1>
+      <div class="access" style="display:flex;gap:14px;align-items:center">
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=130x130&data=${encodeURIComponent(tripUrl)}"
+             width="130" height="130" alt="trip QR">
+        <div><b>Take this trip mobile:</b> scan with your phone, sign in, and the app
+        scopes to these ${data.length} sites (it also follows your login automatically).</div>
+      </div>
       <h2>Route (visit order)</h2>
       <table><tr><th>#</th><th>Asset</th><th>Location</th><th>Scope</th><th>Lock</th><th>Issues</th></tr>${coverRows}</table>
       <div class="bring"><h2>&#9888; What to bring — flagged parts</h2>
