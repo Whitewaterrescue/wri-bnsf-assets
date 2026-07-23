@@ -737,6 +737,15 @@ window.addEventListener("popstate", e => {
     } else ovDepth = Math.min(ovDepth, e.state.wriOverlay);
   } else closeOverlay(true);                 // popped below the overlay -> close
 });
+// headless-test hook: exposes overlay/back-nav state only (no data access) so
+// the guide's Back behavior can be regression-tested without an AGOL login
+window.__navtest = {
+  openOverlay,
+  state: () => ({ovDepth, guideShowing, open: $("overlay").classList.contains("open"),
+                 title: $("oTitle").textContent}),
+  stub: id => { byId[id] = {attrs:{equipment_id:id, GlobalID:"{0}"}, equip:[], clocks:[]}; selected = id; },
+  setGuide: v => { guideShowing = v; },
+};
 
 function openSurvey(kind, extra){
   const x = byId[selected]; if (!x) return;
