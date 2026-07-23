@@ -254,7 +254,7 @@
       <button class="btn red" id="btnInsp">DOT Annual</button>
       <button class="btn red" id="btnCount">Audit</button>
     </div>
-    <div class="btns" id="auditMaint" style="display:none;padding-top:0"></div>
+    <div class="btns" id="auditMaint" style="display:none"></div>
     <div class="btns">
       <button class="btn red" id="btnIssue">Report Issue</button>
     </div>
@@ -391,6 +391,7 @@ async function boot(){
   try {
     const self = await (await fetch(`${PORTAL}/sharing/rest/community/self?f=json&token=${cred.token}`)).json();
     window.isAdmin = !!self && (self.role === "org_admin" || ADMIN_USERS.includes(self.username));
+    window.__userName = (self && self.fullName) || cred.userId;   // inspector-name autofill
   } catch(e){ console.warn("admin check failed", e); }
   if (window.isAdmin) $("who").textContent = cred.userId + " · admin";
   $("loadMsg").textContent = "Loading fleet…";
@@ -824,6 +825,26 @@ window.addEventListener("message", e => {
     if (d.includes("onFormSubmitted") && $("overlay").classList.contains("open") && !guideShowing)
       setTimeout(afterSubmitToGuide, 1200);   // let the S123 'sent' screen flash first
   } catch(err){ /* ignore foreign messages */ }
+});
+
+// ---- inspector name / affiliation autofill (client 2026-07-23) ----
+// Every form renders into #oBody; whenever it re-renders, fill empty
+// *Who fields from the last-used value (falling back to the AGOL login's
+// full name) and *Aff fields from the last-used affiliation.
+new MutationObserver(() => {
+  $("oBody").querySelectorAll("input[id]").forEach(el => {
+    if (el.value) return;
+    if (/Who$/.test(el.id))
+      el.value = localStorage.getItem("ar_who") || window.__userName || "";
+    else if (/Aff$/.test(el.id))
+      el.value = localStorage.getItem("ar_aff") || "";
+  });
+}).observe($("oBody"), {childList: true});
+document.addEventListener("input", e => {
+  const id = e.target && e.target.id;
+  if (!id) return;
+  if (/Who$/.test(id) && e.target.value.trim()) localStorage.setItem("ar_who", e.target.value.trim());
+  if (/Aff$/.test(id) && e.target.value.trim()) localStorage.setItem("ar_aff", e.target.value.trim());
 });
 
 // headless-test hook: exposes overlay/back-nav state only (no data access) so
@@ -1897,6 +1918,18 @@ const ASSET_MAINT = {
     ["Electric ice augers + chargers","Test batteries; inspect augers for damage."],
     ["3HP Honda capstan winch","Check oil (change after 30 hours of use or annually); run fuel lines dry."],
     ["200' Dyneema rescue rope","Inspect for damage (contamination, cut sheath, deformation, friction burns); replace if found."]]},
+  oil_spill_trailer_maint: {label:"Oil Spill Trailer Maint", code:"OSM", tasks:[
+    ["Hydraulic oil and filter","Check level, top off if low. Change oil and filter at 300-hour intervals."],
+    ["Hydraulic suction strainers","Remove and clean at 600-hour intervals."],
+    ["Air intake","Clean (or replace if necessary) at 500-hour intervals."],
+    ["Engine oil","Check level, top off if low. Change engine oil at 200-hour intervals."],
+    ["Engine oil filter","Clean or replace at 400-hour intervals."],
+    ["Operation test","Start the power pack and confirm it runs."],
+    ["Fuel","Drain tank; refill with fresh diesel plus stabilizer."],
+    ["Fuel tank","Drain and clean tank at 200-hour intervals."],
+    ["Battery electrolyte","Verify electrolyte reaches the bottom of the vent walls."],
+    ["Battery","Charge to 80 percent or greater voltage capacity."],
+    ["Storage prep","Disconnect battery cables."]]},
   hyd_reel_trailer_maint: {label:"Boom Reel Maint", code:"REEL", tasks:[
     ["Qualitec reel — gear lube","Check gear lube on the reel; add as needed."],
     ["Qualitec reel — grease fittings","Grease the zerk on the bearing / pillow block."],
