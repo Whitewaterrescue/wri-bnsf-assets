@@ -1226,6 +1226,10 @@ const PREP_CSS = `
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 18px} .grid div b{color:#555}
   .note{color:#666;font-style:italic;margin:4px 0}
   .access{border:2px solid #ee6e01;border-radius:6px;padding:8px 12px;margin:8px 0;font-size:12.5px}
+  .bring{border:3px solid #ee6e01;background:#fff3e0;border-radius:8px;padding:10px 14px;margin:12px 0;
+    -webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .bring h2{margin:0 0 6px}
+  .bring ul{margin:0 0 0 18px}
   .pagebrk{page-break-before:always;margin-top:28px;border-top:1px dashed #ccc}
   .noprint{margin:12px 0} @media print{.noprint{display:none} body{margin:6px}}`;
 const PRINT_BTN = `<div class="noprint"><button onclick="window.print()" style="padding:10px 22px;background:#ee6e01;color:#fff;border:none;border-radius:6px;font-weight:700;font-size:14px;cursor:pointer">Print</button></div>`;
@@ -1311,10 +1315,10 @@ $("btnPrep").onclick = async () => {
       ${PRINT_BTN}
       <h1>Site Visit Prep — ${esc(a.equipment_id)} <small>generated ${new Date().toLocaleDateString()} · WRI BNSF Asset Readiness</small></h1>
       ${prepIdentity(a)}
+      <div class="bring"><h2>&#9888; Bring list — open issues</h2><ul>${prepIssueList(issFs)}</ul></div>
       <h2>Clocks this visit can close</h2>
       ${prepClockTable(x)}
       ${prepInstructions()}
-      <h2>Bring list — open issues</h2><ul>${prepIssueList(issFs)}</ul>
       ${prepInvSection(baseFs)}
       </body></html>`);
     w.document.close();
@@ -1387,8 +1391,8 @@ async function buildTripSheet(eids){
       return `<div class="pagebrk"></div>
         <h1>${i+1} / ${data.length} — ${esc(a.equipment_id)} <small>${scopeOf(d.x)}</small></h1>
         ${prepIdentity(a)}
+        <div class="bring"><h2>&#9888; Bring list — open issues</h2><ul>${prepIssueList(d.issFs)}</ul></div>
         <h2>Clocks this visit can close</h2>${prepClockTable(d.x)}
-        <h2>Bring list — open issues</h2><ul>${prepIssueList(d.issFs)}</ul>
         ${prepInvSection(d.baseFs)}`;
     }).join("");
     const w = window.open("", "_blank");
@@ -1398,8 +1402,8 @@ async function buildTripSheet(eids){
       <h1>Inspection Trip Sheet <small>generated ${new Date().toLocaleDateString()} · ${data.length} assets · WRI BNSF Asset Readiness</small></h1>
       <h2>Route (visit order)</h2>
       <table><tr><th>#</th><th>Asset</th><th>Location</th><th>Scope</th><th>Lock</th><th>Issues</th></tr>${coverRows}</table>
-      <h2>What to bring — flagged parts</h2>
-      <ul>${bring.join("") || "<li>No open-issue parts flagged.</li>"}</ul>
+      <div class="bring"><h2>&#9888; What to bring — flagged parts</h2>
+      <ul>${bring.join("") || "<li>No open-issue parts flagged.</li>"}</ul></div>
       <h2>Standard inspection kit</h2>
       <div class="cklist">${TRIP_KIT.map(i=>`<div>&#9744; ${esc(i)}</div>`).join("")}</div>
       ${prepInstructions()}
@@ -2131,15 +2135,25 @@ window.openNativeAudit = async () => {
       orderByFields:["OBJECTID"], num:2000});
     const items = fs.features.map(f => f.attributes);
     if (!items.length){ $("oBody").innerHTML = "No baseline inventory on file for this asset."; return; }
-    let lastCat = null;
+    // collapsible walk-zone sections (client 2026-07-23) — headers toggle;
+    // sections start OPEN so nothing is silently skipped (untouched = present)
+    let lastCat = null, sec = -1;
+    const secCounts = [];
     const rowsHtml = items.map((b, i) => {
       const exp = b.expected_qty ?? 1;
       const cat = catLabel(b.item_category);
-      const hdr = cat !== lastCat ? `<div class="invcat">${esc(cat)}</div>` : "";
-      lastCat = cat;
+      let hdr = "";
+      if (cat !== lastCat){
+        sec++; secCounts[sec] = items.filter(t => catLabel(t.item_category) === cat).length;
+        hdr = `<div class="invcat audsec" data-sec="${sec}" style="cursor:pointer;user-select:none">
+          <span class="secarrow" style="color:var(--accent)">&#9662;</span> ${esc(cat)}
+          <span style="color:var(--text-muted);font-weight:400"> · ${secCounts[sec]} items</span>
+          <span class="secdev" id="secdev${sec}" style="color:var(--warn)"></span></div>`;
+        lastCat = cat;
+      }
       const unit = (b.item_unit && b.item_unit !== "each") ? " " + esc(b.item_unit) : "";
       const loc = b.baseline_notes ? ` · ${esc(b.baseline_notes)}` : "";
-      return `${hdr}<div class="audrow" data-search="${esc((b.item_desc + " " + (b.item_code||"") + " " + cat).toLowerCase())}">
+      return `${hdr}<div class="audrow" data-sec="${sec}" data-search="${esc((b.item_desc + " " + (b.item_code||"") + " " + cat).toLowerCase())}">
         <div class="adesc">${esc(b.item_desc)}${b.critical_item === "yes" ? ' <span style="color:var(--warn)">&#9888;</span>' : ""}
           <span class="asub">${esc(b.item_code||"")}${loc}</span></div>
         <div class="aexp">${exp}${unit}</div>
@@ -2211,8 +2225,36 @@ window.openNativeAudit = async () => {
         if (dev){ nd++; if (isCrit) nc++; }
       });
       $("audStat").innerHTML = `${nd} deviation${nd === 1 ? "" : "s"}${nc ? ` · <b style="color:var(--bad)">${nc} critical</b>` : ""}`;
+      // per-section deviation tallies so a collapsed zone still shows its flags
+      const devBySec = {};
+      $("oBody").querySelectorAll(".audrow.dev").forEach(r =>
+        devBySec[r.dataset.sec] = (devBySec[r.dataset.sec] || 0) + 1);
+      secCounts.forEach((_, s) => { const el = document.getElementById("secdev" + s);
+        if (el) el.textContent = devBySec[s] ? ` · ${devBySec[s]} flagged` : ""; });
       return {nd, nc};
     };
+    const collapsed = new Set();
+    const syncRows = () => {
+      const q = $("audSearch").value.trim().toLowerCase();
+      $("oBody").querySelectorAll(".audrow").forEach(r => {
+        const hit = !q || r.dataset.search.includes(q);
+        r.style.display = hit && (q || !collapsed.has(r.dataset.sec)) ? "" : "none";
+      });
+      $("oBody").querySelectorAll(".audsec").forEach(h => {
+        const s = h.dataset.sec;
+        const any = !q || [...$("oBody").querySelectorAll(`.audrow[data-sec="${s}"]`)]
+          .some(r => r.dataset.search.includes(q));
+        h.style.display = any ? "" : "none";
+        h.querySelector(".secarrow").innerHTML = (q || !collapsed.has(s)) ? "&#9662;" : "&#9656;";
+      });
+      $("oBody").querySelectorAll(".invcat:not(.audsec)").forEach(h =>
+        h.style.display = q ? "none" : "");
+    };
+    $("oBody").querySelectorAll(".audsec").forEach(h => h.onclick = () => {
+      const s = h.dataset.sec;
+      collapsed.has(s) ? collapsed.delete(s) : collapsed.add(s);
+      syncRows();
+    });
     const phReady = () => phSlots.every(([k]) => phFiles[k]);
     const phSync = () => {
       $("audSubmit").disabled = !phReady();
@@ -2261,19 +2303,7 @@ window.openNativeAudit = async () => {
     };
     $("oBody").oninput = e => {
       if (e.target.classList.contains("aq")) stat();
-      if (e.target.id === "audSearch"){
-        const q = e.target.value.trim().toLowerCase();
-        $("oBody").querySelectorAll(".audrow").forEach(r =>
-          r.style.display = !q || r.dataset.search.includes(q) ? "" : "none");
-        $("oBody").querySelectorAll(".invcat").forEach(h => {
-          let el = h.nextElementSibling, any = false;
-          while (el && !el.classList.contains("invcat")){
-            if (el.classList.contains("audrow") && el.style.display !== "none"){ any = true; break; }
-            el = el.nextElementSibling;
-          }
-          h.style.display = (any || !q) ? "" : "none";
-        });
-      }
+      if (e.target.id === "audSearch") syncRows();
     };
     $("audSubmit").onclick = async () => {
       const who = $("audWho").value.trim();
