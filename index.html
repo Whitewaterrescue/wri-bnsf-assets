@@ -358,9 +358,7 @@ async function qAll(lyr, outFields, geom){
 }
 
 async function boot(){
-  // ?navtest skips sign-in + data load so headless tests can drive the
-  // overlay/back-nav state machine (window.__navtest) without an AGOL login
-  if (new URLSearchParams(location.search).has("navtest")) return;
+  if (NAVTEST) return;
   await esriId.checkSignInStatus(PORTAL + "/sharing").catch(() => esriId.getCredential(PORTAL + "/sharing"));
   const cred = await esriId.getCredential(PORTAL + "/sharing");
   $("who").textContent = cred.userId;
@@ -679,6 +677,10 @@ const ASSET_SURVEYS = {
 // ovDepth is OUR count of overlay history entries (1 = overlay, 2 = child of
 // the guide). Never trust history.state depth for navigation math — embedded
 // S123 iframes push their own entries into the shared history and break it.
+// ?navtest = headless-test mode: boot skips sign-in/data and renderGuide
+// renders a stub, so window.__navtest can drive the back-nav state machine
+// without an AGOL login (real queries would trigger the OAuth redirect)
+const NAVTEST = new URLSearchParams(location.search).has("navtest");
 let guideShowing = false, ovDepth = 0;
 function openOverlay(title, opts){
   $("oTitle").textContent = title;
@@ -1424,6 +1426,7 @@ function openGuide(){
 window.openGuideRefresh = () => { const x = byId[selected]; if (x) showGuideContent(x); };
 
 async function renderGuide(x){
+  if (NAVTEST){ $("oBody").innerHTML = "guide (navtest stub)"; return; }
   const a = x.attrs;
   const aguid = String(a.GlobalID).replace(/[{}]/g,"");
   try { await processAssetAudit(x); } catch(e){ console.warn("live processing skipped:", e); }
