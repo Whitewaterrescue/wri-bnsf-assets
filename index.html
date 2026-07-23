@@ -804,10 +804,32 @@ window.addEventListener("popstate", e => {
     } else ovDepth = Math.min(ovDepth, e.state.wriOverlay);
   } else closeOverlay(true);                 // popped below the overlay -> close
 });
+// after a successful submit, land on the Full Audit guide (client 2026-07-23)
+// — depth-2 forms pop back to it; depth-1 forms (DOT / issue / trailer maint
+// from the detail box) swap the overlay to it in place. Non-auditable assets
+// (DOT-only fire trailers) keep the old close-to-detail behavior.
+function afterSubmitToGuide(){
+  const x = byId[selected];
+  const auditable = x && $("btnCount").style.display !== "none";
+  if (!x || !auditable){ ovDepth > 1 ? history.back() : closeOverlay(false); return; }
+  if (ovDepth > 1){ ovDepth = 1; showGuideContent(x); history.back(); }
+  else showGuideContent(x);
+}
+// Survey123 fallback forms: the embedded web app posts a message on submit —
+// bounce back to the guide so the S123 path matches the native forms
+window.addEventListener("message", e => {
+  try {
+    if (!/\.arcgis\.com$/.test(new URL(e.origin).hostname)) return;
+    const d = typeof e.data === "string" ? e.data : JSON.stringify(e.data || {});
+    if (d.includes("onFormSubmitted") && $("overlay").classList.contains("open") && !guideShowing)
+      setTimeout(afterSubmitToGuide, 1200);   // let the S123 'sent' screen flash first
+  } catch(err){ /* ignore foreign messages */ }
+});
+
 // headless-test hook: exposes overlay/back-nav state only (no data access) so
 // the guide's Back behavior can be regression-tested without an AGOL login
 window.__navtest = {
-  openOverlay,
+  openOverlay, afterSubmitToGuide,
   state: () => ({ovDepth, guideShowing, open: $("overlay").classList.contains("open"),
                  title: $("oTitle").textContent}),
   stub: id => { byId[id] = {attrs:{equipment_id:id, GlobalID:"{0}"}, equip:[], clocks:[]}; selected = id; },
@@ -1720,7 +1742,7 @@ window.launchResolve = async () => {
         if (bad.length) throw new Error("rows failed: " + bad[0].error.message);
         openIssues = null;  // stats cache stale
         toast("Resolutions submitted");
-        history.back();  // guide layer re-renders and closes issues / advances the clock
+        afterSubmitToGuide();  // guide re-renders: closes issues / advances the clock
       } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
         $("nrSubmit").disabled = false; $("nrSubmit").textContent = "Submit resolutions"; }
     };
@@ -1770,7 +1792,7 @@ window.openNativeIssue = () => {
       openIssues = null;  // stats cache stale
       toast("Issue reported" + (sev === "critical" ? " — CRITICAL" : ""));
       loadBring(x);
-      history.back();
+      afterSubmitToGuide();
     } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
       $("niSubmit").disabled = false; $("niSubmit").textContent = "Submit issue"; }
   };
@@ -2005,7 +2027,7 @@ window.openNativeDetails = () => {
           + (Object.keys(upd).length ? " [updated: " + Object.keys(upd).join(", ") + "]" : "")).slice(0,1000),
         app_version: "viewer-details", source_device: "browser"});
       toast("Details check submitted");
-      history.back();
+      afterSubmitToGuide();
     } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e)); $("ndSubmit").disabled = false; }
   };
 };
@@ -2081,7 +2103,7 @@ window.openNativeMaint = (kind, equipGuid, equipId) => {
       if (bad.length) throw new Error("task rows failed: " + bad[0].error.message);
       toast(nfail ? `Submitted — ${nfail} FAILED task(s) will flag critical`
                   : "Maintenance submitted — all tasks passed");
-      history.back();
+      afterSubmitToGuide();
     } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
       $("nmSubmit").disabled = false; $("nmSubmit").textContent = "Submit maintenance"; }
   };
@@ -2142,7 +2164,7 @@ window.openNativeAssetMaint = (kind) => {
       toast(nfail ? `Submitted — ${nfail} FAILED task(s) will flag critical`
                   : "Maintenance submitted — all tasks passed");
       try { await processAssetAudit(x); } catch(pe){ console.warn(pe); }
-      history.back();
+      afterSubmitToGuide();
     } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
       $("amSubmit").disabled = false; $("amSubmit").textContent = "Submit maintenance"; }
   };
@@ -2212,7 +2234,7 @@ window.openNativeDOT = () => {
           toast("Inspection SAVED, but the attachment didn't upload — retry it from better signal (do not resubmit the inspection)"); }
       }
       toast("Inspection submitted — " + res.replace(/_/g, " "));
-      history.back();
+      afterSubmitToGuide();
     } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
       $("dtSubmit").disabled = false; $("dtSubmit").textContent = "Submit inspection"; }
   };
@@ -2486,7 +2508,7 @@ window.openNativeAudit = async () => {
         toast(`Audit submitted — ${result === "pass" ? "all items present" :
           nd + " deviation(s)" + (nc ? ", " + nc + " CRITICAL" : "")}`
           + (failed.length ? ` (${failed.length} photo(s) failed to upload)` : ""));
-        history.back();  // pops to the guide layer, which re-checks status
+        afterSubmitToGuide();  // guide re-checks status ticks
       } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
         $("audSubmit").disabled = false; $("audSubmit").textContent = "Submit audit"; }
     };
