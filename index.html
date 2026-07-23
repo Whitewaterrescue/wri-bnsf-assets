@@ -358,6 +358,9 @@ async function qAll(lyr, outFields, geom){
 }
 
 async function boot(){
+  // ?navtest skips sign-in + data load so headless tests can drive the
+  // overlay/back-nav state machine (window.__navtest) without an AGOL login
+  if (new URLSearchParams(location.search).has("navtest")) return;
   await esriId.checkSignInStatus(PORTAL + "/sharing").catch(() => esriId.getCredential(PORTAL + "/sharing"));
   const cred = await esriId.getCredential(PORTAL + "/sharing");
   $("who").textContent = cred.userId;
