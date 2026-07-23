@@ -9,6 +9,8 @@
   *{margin:0;padding:0;box-sizing:border-box}
   :root{--bg:#151310;--surface:#1f1c18;--surface-alt:#2b2926;--accent:#ee6e01;
         --text:#e5e7eb;--text-dim:#9ca3af;--text-muted:#6b7280;--border:#3b372f;--warn:#f59e0b}
+  :root[data-theme="light"]{--bg:#f3f1ee;--surface:#fff;--surface-alt:#eceae6;
+        --text:#1c1917;--text-dim:#57534e;--text-muted:#8a817a;--border:#d6d1cb;--warn:#b45309}
   body{background:var(--bg);color:var(--text);font-family:-apple-system,system-ui,'Segoe UI',Roboto,sans-serif;
        font-size:15px;line-height:1.5;padding-bottom:60px}
   header{position:sticky;top:0;background:var(--surface);border-bottom:2px solid var(--accent);
@@ -42,6 +44,10 @@
     header,nav{position:static} h2{color:#c25a01;background:none;padding:6px 0;border-bottom:2px solid #ee6e01;border-radius:0}
   }
 </style>
+<script>
+// follow the viewer's saved theme (same origin, same localStorage key)
+document.documentElement.dataset.theme = localStorage.getItem("ar_theme") || "dark";
+</script>
 </head>
 <body>
 <header>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>BNSF HAZMAT · Asset Readiness (Beta)</title>
 <link rel="icon" type="image/png" href="favicon.png">
-<link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/dark/main.css">
+<link id="esriTheme" rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/dark/main.css">
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   :root{
@@ -15,6 +15,13 @@
     --border:#3b372f;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--deployed:#3b82f6;
     --font:-apple-system,system-ui,'Segoe UI',Roboto,sans-serif;
   }
+  :root[data-theme="light"]{
+    /* same brand orange on warm paper; status colors darkened for light bgs */
+    --bg:#f3f1ee;--surface:#ffffff;--surface-alt:#eceae6;
+    --text:#1c1917;--text-dim:#57534e;--text-muted:#8a817a;
+    --border:#d6d1cb;--ok:#15803d;--warn:#b45309;--bad:#dc2626;--deployed:#2563eb;
+  }
+  :root[data-theme="light"] header .logochip{border:1px solid var(--border)}
   html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;overflow:hidden}
   #app{display:grid;grid-template-rows:48px 1fr;height:100%;height:100dvh}
   header{display:flex;align-items:center;gap:10px;padding:0 calc(12px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left));background:var(--surface);border-bottom:2px solid var(--accent);min-width:0}
@@ -87,7 +94,9 @@
   .legend span{display:flex;align-items:center;gap:5px}
   #chartTip{position:fixed;background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;pointer-events:none;display:none;z-index:60}
   header .wri{background:none;border:1px solid var(--border);color:var(--text-muted);border-radius:6px;font-size:10px;padding:3px 7px;cursor:pointer;font-weight:700;margin-left:8px}
-  body.wri-tools header .wri{color:var(--warn);border-color:var(--warn)}
+  body.wri-tools header #wriToggle{color:var(--warn);border-color:var(--warn)}
+  body.inspector #tabStats,body.inspector #mtabStats{display:none}
+  body.inspector #flt_contractor_name{display:none}
   #tabNear{display:none}
   body.wri-tools #tabNear{display:block}
   #btnMob{display:none}
@@ -109,7 +118,7 @@
     header{gap:8px}
     header h1{font-size:14px}
     header .who{display:none}
-    header .wri{margin-left:auto}
+    header #themeToggle{margin-left:auto}
     /* bottom tab bar replaces the top strip + FAB on phones */
     #tabs{display:none}
     #mtabs{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:45;background:var(--surface);border-top:2px solid var(--accent);padding-bottom:env(safe-area-inset-bottom)}
@@ -171,6 +180,15 @@
   .taskrow input{display:none;margin-top:6px;width:100%;padding:7px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px}
   .taskrow.failed input{display:block}
 </style>
+<script>
+// pre-paint theme apply (no flash) — the in-app toggle handles the rest
+(function(){
+  var t = localStorage.getItem("ar_theme") || "dark";
+  document.documentElement.dataset.theme = t;
+  if (t === "light")
+    document.getElementById("esriTheme").href = "https://js.arcgis.com/4.29/esri/themes/light/main.css";
+})();
+</script>
 </head>
 <body>
 <div id="loader"><div class="spin"></div><div id="loadMsg">Signing in to ArcGIS…</div></div>
@@ -181,6 +199,8 @@
     <span class="logochip"><img src="bnsf-hazmat-logo.png" alt="BNSF Hazmat"></span>
     <h1>Asset Readiness</h1><span class="beta">BETA</span>
     <span class="who" id="who"></span>
+    <button class="wri" id="themeToggle" title="Light / dark mode">&#9788;</button>
+    <button class="wri" id="roleToggle" style="display:none" title="Switch between admin and inspector views">Inspector</button>
     <button class="wri" id="wriToggle" title="Show/hide WRI internal tools">WRI</button>
   </header>
   <div id="main">
@@ -427,7 +447,8 @@ async function boot(){
     });
   } catch(e){ console.warn("region overlay unavailable", e); }
   view = new MapView({
-    container:"mapDiv", map:new Map({basemap:"dark-gray-vector",
+    container:"mapDiv", map:new Map({
+      basemap: document.documentElement.dataset.theme === "light" ? "gray-vector" : "dark-gray-vector",
       layers: regionLayer ? [regionLayer, gLayer] : [gLayer]}),
     center:[-105,44], zoom:4, popupEnabled:false,
     ui:{components:["zoom"]}
@@ -443,8 +464,10 @@ async function boot(){
   });
 
   buildFilters();
+  applyViewMode(localStorage.getItem("ar_view") || (window.isAdmin ? "admin" : "inspector"));
   renderList(currentListItems());
-  setTab("stats");   // land on the dashboard; Assets tab holds the list
+  // admins land on the dashboard; inspectors land on their asset list
+  setTab(window.viewMode === "inspector" ? "list" : "stats");
   $("loader").style.display = "none";
 
   // QR / deep link: ?asset=<equipment_id> opens that asset directly
@@ -541,7 +564,9 @@ function renderList(items){
     } else select(r.dataset.eid, true);
   });
   const c = $("fltCount");
-  if (c) c.textContent = `${items.length} of ${assets.length} assets shown`;
+  const universe = window.viewMode === "inspector"
+    ? assets.filter(x => x.attrs.contractor_name === "WRI").length : assets.length;
+  if (c) c.textContent = `${items.length} of ${universe} assets shown`;
   drawMarkers(items);   // map mirrors the active filters
 }
 
@@ -599,7 +624,7 @@ function select(eid, zoom){
     || (!x.clocks.length && ["trailer","kit","container","cache","railcar"].includes(a.asset_category));
   $("btnInsp").style.display = showDOT ? "" : "none";
   $("btnCount").style.display = showInv ? "" : "none";
-  $("adminRow").style.display = window.isAdmin ? "" : "none";
+  $("adminRow").style.display = (window.isAdmin && window.viewMode === "admin") ? "" : "none";
   // asset-level maintenance grids (comms/ice/boom reel/airboat) when that clock exists
   const mkinds = Object.keys(ASSET_MAINT).filter(hasClock);
   const am = $("auditMaint");
@@ -625,7 +650,9 @@ $("fab").onclick = () => { $("detail").classList.remove("open"); showPanel(); };
 
 let listFilter = "";
 function currentListItems(){
-  let items = assets;
+  let items = window.viewMode === "inspector"
+    ? assets.filter(x => x.attrs.contractor_name === "WRI")   // inspectors see their fleet
+    : assets;
   for (const [field, val] of Object.entries(filterState)){
     if (val) items = items.filter(x => x.attrs[field] === val);
   }
@@ -824,7 +851,7 @@ async function showInventory(){
       ${lastCount ? ` · adjusted by count ${fmtDate(lastCount.insp_date)}${lastCount.inspector_name?" ("+esc(lastCount.inspector_name)+")":""}` : " · baseline only — no counts recorded yet"}
       ${flagged ? ` · <b style="color:var(--warn)">${flagged} flagged</b>` : ""}
       · <a href="#" id="invCsv" style="color:var(--deployed);font-weight:600">Download CSV</a>
-      ${window.isAdmin ? ` · <a href="#" id="invAdm" style="color:var(--accent);font-weight:600">Admin: edit items</a>` : ""}</div>`;
+      ${window.isAdmin && window.viewMode === "admin" ? ` · <a href="#" id="invAdm" style="color:var(--accent);font-weight:600">Admin: edit items</a>` : ""}</div>`;
     $("oBody").innerHTML = baseFs.features.length ? hdr + rows
       : "No baseline inventory on file — run an Audit Inventory count to establish one.";
     const admLink = $("invAdm");
@@ -871,7 +898,7 @@ const dstr = ms => ms ? new Date(ms).toISOString().slice(0,10) : "";
 const dms = s => s ? Date.parse(s + "T12:00:00") : null;
 
 window.openAdminAsset = () => {
-  const x = byId[selected]; if (!x || !window.isAdmin) return;
+  const x = byId[selected]; if (!x || !window.isAdmin || window.viewMode !== "admin") return;
   const a = x.attrs;
   openOverlay("Edit Asset (admin) — " + a.equipment_id, {html:
     `<div class="cd" style="margin-bottom:8px">Writes straight to the assets layer.
@@ -914,7 +941,7 @@ window.openAdminAsset = () => {
 };
 
 window.openAdminClocks = () => {
-  const x = byId[selected]; if (!x || !window.isAdmin) return;
+  const x = byId[selected]; if (!x || !window.isAdmin || window.viewMode !== "admin") return;
   const a = x.attrs;
   openOverlay("Edit Clocks (admin) — " + a.equipment_id, {html:
     `<div class="cd" style="margin-bottom:8px">Direct clock surgery — the processor recomputes
@@ -966,7 +993,7 @@ window.openAdminClocks = () => {
 };
 
 window.openAdminBaseline = async () => {
-  const x = byId[selected]; if (!x || !window.isAdmin) return;
+  const x = byId[selected]; if (!x || !window.isAdmin || window.viewMode !== "admin") return;
   const a = x.attrs;
   const guid = String(a.GlobalID).replace(/[{}]/g,"");
   openOverlay("Edit Inventory (admin) — " + a.equipment_id,
@@ -2896,7 +2923,8 @@ function runNearest(){
   if (!nearPt) return;
   const term = $("nearTerm").value.trim().toLowerCase();
   const inclAll = $("nearAll").checked;
-  let cands = assets.filter(x => x.geom);
+  let cands = (window.viewMode === "inspector"
+    ? assets.filter(x => x.attrs.contractor_name === "WRI") : assets).filter(x => x.geom);
   if (!inclAll) cands = cands.filter(x => x.attrs.asset_status === "available");
   if (term) cands = cands.filter(x => x.cap.includes(term));
   cands = cands.map(x => ({x, d: distMi(nearPt.latitude, nearPt.longitude, x.geom.latitude, x.geom.longitude)}))
@@ -2945,6 +2973,41 @@ $("btnMob").onclick = async () => {
     select(a.equipment_id, false);
   } catch(e){ console.error(e); toast("Edit failed: " + (e.message||e)); }
 };
+
+// ---- light / dark mode (persists; pre-paint script in <head> avoids flash) ----
+function applyTheme(t){
+  document.documentElement.dataset.theme = t;
+  $("esriTheme").href = `https://js.arcgis.com/4.29/esri/themes/${t === "light" ? "light" : "dark"}/main.css`;
+  try { if (view) view.map.basemap = t === "light" ? "gray-vector" : "dark-gray-vector"; } catch(e){}
+  localStorage.setItem("ar_theme", t);
+  $("themeToggle").innerHTML = t === "light" ? "&#9790;" : "&#9788;";  // shows what you switch TO
+}
+$("themeToggle").onclick = () =>
+  applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
+applyTheme(document.documentElement.dataset.theme || "dark");
+
+// ---- admin vs inspector view ----
+// Inspector: contractor's own fleet (WRI for the beta), no Stats, no admin
+// editors. Admins default to the full view and can flip live for demos.
+window.viewMode = "inspector";
+function applyViewMode(m){
+  window.viewMode = window.isAdmin ? m : "inspector";   // only admins can elevate
+  localStorage.setItem("ar_view", window.viewMode);
+  document.body.classList.toggle("inspector", window.viewMode === "inspector");
+  const rt = $("roleToggle");
+  rt.style.display = window.isAdmin ? "" : "none";
+  rt.textContent = window.viewMode === "inspector" ? "Admin" : "Inspector"; // what you switch TO
+  if (window.viewMode === "inspector"){
+    if ($("statsPanel").classList.contains("active")) setTab("list");
+    if (selected && !(byId[selected] && byId[selected].attrs.contractor_name === "WRI")){
+      $("detail").classList.remove("open"); selected = null;   // asset left the visible set
+    }
+    $("adminRow").style.display = "none";
+  } else if (selected) select(selected, false);
+  renderList(currentListItems());
+}
+$("roleToggle").onclick = () =>
+  applyViewMode(window.viewMode === "inspector" ? "admin" : "inspector");
 
 boot().catch(e => { console.error(e); $("loadMsg").textContent = "Failed to load: " + (e.message||e); });
 });
