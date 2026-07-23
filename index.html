@@ -711,9 +711,12 @@ function closeOverlay(fromPop){
   const d = ovDepth; ovDepth = 0;
   if (!fromPop && d) history.go(-d);
 }
+// depth 2 always means "child of the audit guide" — every stacked opener is a
+// guide flow. (Was keyed on ASSET_SURVEYS, which broke Back on the 39 assets
+// that gained the guide without tailored S123 forms, 2026-07-23.)
 $("oBack").onclick = () => {
   const x = byId[selected];
-  if (ovDepth > 1 && x && (ASSET_SURVEYS[x.attrs.equipment_id]||{}).audit){
+  if (ovDepth > 1 && x){
     // render the guide IMMEDIATELY (never wait on history — iframe entries
     // can sit between ours), then nudge history back to stay roughly in sync
     ovDepth = 1;
@@ -723,12 +726,10 @@ $("oBack").onclick = () => {
 };
 window.addEventListener("popstate", e => {
   if (!$("overlay").classList.contains("open")) return;
-  if (e.state && e.state.wriOverlay){
-    const x = byId[selected];
-    if (x && (ASSET_SURVEYS[x.attrs.equipment_id]||{}).audit){
-      ovDepth = 1;
-      if (!guideShowing) showGuideContent(x);  // child popped -> back to the guide
-    } else closeOverlay(true);
+  const x = byId[selected];
+  if (e.state && e.state.wriOverlay && ovDepth > 1 && x){
+    ovDepth = 1;
+    if (!guideShowing) showGuideContent(x);  // child popped -> back to the guide
   } else closeOverlay(true);
 });
 
