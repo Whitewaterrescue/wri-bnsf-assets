@@ -213,6 +213,7 @@
       </div>
       <input id="search" type="text" placeholder="Search ID, name, warehouse, type…" style="display:block">
       <div id="filters"></div>
+      <div id="tripActive" style="display:none;margin:0 8px 8px;padding:8px 10px;border:1px solid var(--accent);border-radius:8px;background:var(--surface-alt);font-size:12.5px;align-items:center;gap:8px"></div>
       <div id="list" class="active"></div>
       <div id="nearPanel">
         <div class="fld"><input id="nearTerm" type="text" placeholder="Capability: boom, skimmer, generator, SCBA, kit…"></div>
@@ -359,6 +360,7 @@ esriId.registerOAuthInfos([new OAuthInfo({appId:"4Fi59bD09H8vlidE", portalUrl:PO
 
 let assets = [], byId = {}, byGuid = {}, selected = null, view, gLayer, nearMode = false, nearPt = null;
 let tripMode = false; const tripSel = new Set();   // insertion order = visit order
+let activeTrip = [];   // built trip: the UI scopes to these ids until cleared (persists)
 const layers = {
   assets: new FeatureLayer({url: SVC + "/0"}),
   sched:  new FeatureLayer({url: SVC + "/11"}),
@@ -464,6 +466,10 @@ async function boot(){
   });
 
   buildFilters();
+  // restore an in-progress trip (field crews close the tab between sites)
+  try { activeTrip = (JSON.parse(localStorage.getItem("ar_trip") || "[]") || []).filter(id => byId[id]); }
+  catch(e){ activeTrip = []; }
+  syncTripBanner();
   applyViewMode(localStorage.getItem("ar_view") || (window.isAdmin ? "admin" : "inspector"));
   renderList(currentListItems());
   // admins land on the dashboard; inspectors land on their asset list
@@ -564,9 +570,10 @@ function renderList(items){
     } else select(r.dataset.eid, true);
   });
   const c = $("fltCount");
-  const universe = window.viewMode === "inspector"
-    ? assets.filter(x => x.attrs.contractor_name === "WRI").length : assets.length;
-  if (c) c.textContent = `${items.length} of ${universe} assets shown`;
+  const universe = (window.viewMode === "inspector"
+    ? assets.filter(x => x.attrs.contractor_name === "WRI") : assets)
+    .filter(x => !activeTrip.length || activeTrip.includes(x.attrs.equipment_id)).length;
+  if (c) c.textContent = `${items.length} of ${universe} assets shown${activeTrip.length ? " · trip" : ""}`;
   drawMarkers(items);   // map mirrors the active filters
 }
 
@@ -653,6 +660,8 @@ function currentListItems(){
   let items = window.viewMode === "inspector"
     ? assets.filter(x => x.attrs.contractor_name === "WRI")   // inspectors see their fleet
     : assets;
+  if (activeTrip.length)   // a built trip scopes everything until cleared
+    items = items.filter(x => activeTrip.includes(x.attrs.equipment_id));
   for (const [field, val] of Object.entries(filterState)){
     if (val) items = items.filter(x => x.attrs[field] === val);
   }
@@ -1348,13 +1357,30 @@ function tripBarSync(){
 }
 window.toggleTripMode = () => {
   tripMode = !tripMode;
-  if (!tripMode) tripSel.clear();
+  if (tripMode) activeTrip.forEach(id => tripSel.add(id));   // re-plan starts from the active trip
+  else tripSel.clear();
   const b = $("btnTrip");
   if (b){ b.textContent = tripMode ? "Cancel trip" : "Plan trip"; b.classList.toggle("on", tripMode); }
-  if (tripMode) setTab("list");   // selection happens in the asset list
+  if (tripMode){ setActiveTrip([]); setTab("list"); }  // unscope so the full fleet is selectable
   renderList(currentListItems());
   tripBarSync();
 };
+// ---- active trip: the built trip keeps scoping the UI until cleared ----
+function setActiveTrip(ids){
+  activeTrip = ids || [];
+  localStorage.setItem("ar_trip", JSON.stringify(activeTrip));
+  syncTripBanner();
+}
+function syncTripBanner(){
+  const el = $("tripActive");
+  if (!activeTrip.length){ el.style.display = "none"; el.innerHTML = ""; return; }
+  el.style.display = "flex";
+  el.innerHTML = `<span style="flex:1">&#129517; <b>Active trip</b> — ${activeTrip.length} asset${activeTrip.length>1?"s":""}, in visit order</span>
+    <button class="btn gray" style="flex:none;padding:6px 10px;font-size:11.5px" id="tripPrint">Trip sheet</button>
+    <button class="btn gray" style="flex:none;padding:6px 10px;font-size:11.5px" id="tripClear">Clear ✕</button>`;
+  $("tripPrint").onclick = () => buildTripSheet([...activeTrip]);
+  $("tripClear").onclick = () => { setActiveTrip([]); renderList(currentListItems()); toast("Trip cleared — showing the full fleet"); };
+}
 // standard inspection-kit bring list (Trailer Inspection Procedure, 2023 edit)
 const TRIP_KIT = ["Pink zip ties (tote + door seals)","Standard zip ties","Spray paint — BLUE (50') and RED (100') for boom buckles",
   "Red indicator tape + marker (boom deflector seal, label w/ counts, footage, date, initials)","Blank tote labels",
@@ -1410,7 +1436,9 @@ async function buildTripSheet(eids){
       ${sections}
       </body></html>`);
     w.document.close();
-    toggleTripMode();
+    setActiveTrip(eids);              // UI stays scoped to this trip until cleared
+    if (tripMode) toggleTripMode();   // leave selection mode (keeps activeTrip)
+    else renderList(currentListItems());
   } catch(e){ console.error(e); toast("Trip sheet failed: " + (e.message||e)); tripBarSync(); }
 }
 
@@ -2712,6 +2740,7 @@ function setTab(t){
   $("nearPanel").classList.toggle("active", t==="near");
   $("search").style.display = t==="list" ? "block" : "none";
   $("filters").style.display = t==="list" ? "flex" : "none";
+  $("tripActive").style.display = (t==="list" && activeTrip.length) ? "flex" : "none";
   if (t==="stats") buildStats();
   showPanel();
 }
@@ -2955,6 +2984,7 @@ function runNearest(){
   const inclAll = $("nearAll").checked;
   let cands = (window.viewMode === "inspector"
     ? assets.filter(x => x.attrs.contractor_name === "WRI") : assets).filter(x => x.geom);
+  if (activeTrip.length) cands = cands.filter(x => activeTrip.includes(x.attrs.equipment_id));
   if (!inclAll) cands = cands.filter(x => x.attrs.asset_status === "available");
   if (term) cands = cands.filter(x => x.cap.includes(term));
   cands = cands.map(x => ({x, d: distMi(nearPt.latitude, nearPt.longitude, x.geom.latitude, x.geom.longitude)}))
