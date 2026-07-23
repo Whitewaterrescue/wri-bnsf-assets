@@ -233,6 +233,7 @@
       <button class="btn red" id="btnInsp">DOT Annual</button>
       <button class="btn red" id="btnCount">Audit</button>
     </div>
+    <div class="btns" id="auditMaint" style="display:none;padding-top:0"></div>
     <div class="btns">
       <button class="btn red" id="btnIssue">Report Issue</button>
     </div>
@@ -324,12 +325,16 @@ const tlabel = t => TYPE_LABEL[t] || title(t);
 // Replacement, and Audit (inventory, ID checks, equipment maintenance, etc.)
 const CLOCK_GROUP = t => (t === "dot_inspection" || t === "bit_inspection") ? "DOT"
   : t === "tire_replacement" ? "Tire Replacement" : "Audit";
+// every form path that submits a full inventory audit — keep in sync with
+// ops/audit_processor.py AUDIT_APPS
+const AUDIT_APPS = "('s123-audit-v2','viewer-audit-v3','s123-beta','s123-excpt')";
 // Same category cleanup the tailored inventory survey applies at build time
 const catLabel = c => String(c||"Other items").split("(")[0].trim() || "Other items";
 
 esriId.registerOAuthInfos([new OAuthInfo({appId:"4Fi59bD09H8vlidE", portalUrl:PORTAL, popup:false})]);
 
 let assets = [], byId = {}, byGuid = {}, selected = null, view, gLayer, nearMode = false, nearPt = null;
+let tripMode = false; const tripSel = new Set();   // insertion order = visit order
 const layers = {
   assets: new FeatureLayer({url: SVC + "/0"}),
   sched:  new FeatureLayer({url: SVC + "/11"}),
@@ -472,6 +477,19 @@ function buildFilters(){
     };
     host.appendChild(sel);
   });
+  const exp = document.createElement("button");
+  exp.className = "btn gray";
+  exp.style.cssText = "padding:6px 10px;font-size:11.5px;flex:none";
+  exp.textContent = "Export CSV";
+  exp.onclick = () => openExportCSV();
+  host.appendChild(exp);
+  const trip = document.createElement("button");
+  trip.className = "btn gray";
+  trip.id = "btnTrip";
+  trip.style.cssText = "padding:6px 10px;font-size:11.5px;flex:none";
+  trip.textContent = "Plan trip";
+  trip.onclick = () => toggleTripMode();
+  host.appendChild(trip);
   const cnt = document.createElement("div");
   cnt.id = "fltCount";
   host.appendChild(cnt);
@@ -495,13 +513,20 @@ function badge(st){ return `<span class="badge" style="background:${COLORS[st]||
 function renderList(items){
   $("list").innerHTML = items.map(x => {
     const a = x.attrs, w = x.worst;
+    const tick = tripMode ? `<span style="font-size:17px;flex:none;color:${tripSel.has(a.equipment_id)?"var(--accent)":"var(--text-muted)"}">${tripSel.has(a.equipment_id)?"☑":"☐"}</span>` : "";
     return `<div class="row ${selected===a.equipment_id?"sel":""}" data-eid="${a.equipment_id}">
-      <span class="dot" style="background:${x.color}"></span>
+      ${tick}<span class="dot" style="background:${x.color}"></span>
       <div><div class="t">${a.equipment_id}</div><div class="s">${title(a.asset_type)} · ${(a.current_warehouse||a.staging_desc||"").split(" - ").pop()||""}</div></div>
       <div class="due">${w ? CLOCK_GROUP(w.sched_type)+"<br>"+fmtDate(w.due_date) : "no clocks"}</div>
     </div>`;
   }).join("");
-  $("list").querySelectorAll(".row").forEach(r => r.onclick = () => select(r.dataset.eid, true));
+  $("list").querySelectorAll(".row").forEach(r => r.onclick = () => {
+    if (tripMode){
+      const id = r.dataset.eid;
+      tripSel.has(id) ? tripSel.delete(id) : tripSel.add(id);   // tap order = visit order
+      renderList(currentListItems()); tripBarSync();
+    } else select(r.dataset.eid, true);
+  });
   const c = $("fltCount");
   if (c) c.textContent = `${items.length} of ${assets.length} assets shown`;
   drawMarkers(items);   // map mirrors the active filters
@@ -519,8 +544,14 @@ function select(eid, zoom){
   $("dClocks").innerHTML = x.clocks.length
     ? ["DOT","Tire Replacement","Audit"].filter(g => cgroups[g]).map(g => {
         const w = cgroups[g][0];
-        const sub = g === "Audit"
-          ? `<div class="cd">${cgroups[g].length} check${cgroups[g].length>1?"s":""} — inventory, ID, equipment maintenance</div>` : "";
+        const parts = [];
+        if (g === "Audit")
+          parts.push(`${cgroups[g].length} check${cgroups[g].length>1?"s":""} — inventory, ID, equipment maintenance`);
+        // a group line shows its WORST clock — name the holder so a red line
+        // never reads as "the audit wasn't recorded"
+        if (cgroups[g].length > 1 && (w.sched_status === "overdue" || w.sched_status === "due_soon"))
+          parts.push(`<span style="color:${COLORS[w.sched_status]}">held by ${tlabel(w.sched_type)}${w._via ? " — " + esc(w._via) : ""}</span>`);
+        const sub = parts.length ? `<div class="cd">${parts.join(" · ")}</div>` : "";
         return `<div class="clock"><span class="dot" style="background:${COLORS[w.sched_status]||COLORS.none}"></span>
           <div class="cn">${g}${sub}</div><div class="cd">due ${fmtDate(w.due_date)}</div></div>`;
       }).join("")
@@ -533,7 +564,12 @@ function select(eid, zoom){
     ["Warehouse",a.current_warehouse],
     ["Base",a.base_warehouse],["Address",a.staging_desc],["WRI region",a.wri_region],
     ["VIN",a.vin],["Plate",[a.plate_number,a.plate_state].filter(Boolean).join(" ")],
-    ["Tire year",a.tire_mfg_year],["GPS #",a.gps_tracking_num],["Holman",a.holman_no]];
+    ["Ball size",a.hitch_ball_size],
+    ["Tires",[a.tire_size, a.tire_load_range ? "LR-" + a.tire_load_range : null,
+      a.tire_mfg_year ? "mfg " + a.tire_mfg_year : null,
+      a.tire_mfg_year ? "replace " + (a.tire_mfg_year + 6) : null].filter(Boolean).join(" · ") || a.tire_mfg_year],
+    ["Extinguishers",[a.ext_count, a.ext_size].filter(v => v != null && v !== "").join(" × ")],
+    ["GPS #",a.gps_tracking_num],["Holman",a.holman_no]];
   $("dIdent").innerHTML = kv.filter(p=>p[1]).map(p=>`<div class="k">${p[0]}</div><div>${p[1]}</div>`).join("");
   // Only offer the audits this asset's schedules actually call for (e.g. capping
   // kits get Audit Inventory but never DOT); category is the no-clock fallback
@@ -544,6 +580,12 @@ function select(eid, zoom){
     || (!x.clocks.length && ["trailer","kit","container","cache","railcar"].includes(a.asset_category));
   $("btnInsp").style.display = showDOT ? "" : "none";
   $("btnCount").style.display = showInv ? "" : "none";
+  // asset-level maintenance grids (comms/ice/boom reel/airboat) when that clock exists
+  const mkinds = Object.keys(ASSET_MAINT).filter(hasClock);
+  const am = $("auditMaint");
+  am.style.display = mkinds.length ? "" : "none";
+  am.innerHTML = mkinds.map(k =>
+    `<button class="btn red" onclick="openNativeAssetMaint('${k}')">${ASSET_MAINT[k].label}</button>`).join("");
   $("auditRow1").style.display = (showDOT || showInv) ? "" : "none";
   $("auditTitle").textContent = (a.asset_category === "trailer" ? "Trailer" : "Asset") + " Audit";
   loadBring(x);
@@ -741,20 +783,138 @@ async function showInventory(){
     const hdr = `<div style="font-size:12px;color:var(--text-dim);margin-bottom:6px">
       ${baseFs.features.length} line items
       ${lastCount ? ` · adjusted by count ${fmtDate(lastCount.insp_date)}${lastCount.inspector_name?" ("+esc(lastCount.inspector_name)+")":""}` : " · baseline only — no counts recorded yet"}
-      ${flagged ? ` · <b style="color:var(--warn)">${flagged} flagged</b>` : ""}</div>`;
+      ${flagged ? ` · <b style="color:var(--warn)">${flagged} flagged</b>` : ""}
+      · <a href="#" id="invCsv" style="color:var(--deployed);font-weight:600">Download CSV</a></div>`;
     $("oBody").innerHTML = baseFs.features.length ? hdr + rows
       : "No baseline inventory on file — run an Audit Inventory count to establish one.";
+    const csvLink = $("invCsv");
+    if (csvLink) csvLink.onclick = ev => {   // data already on screen — no re-query
+      ev.preventDefault();
+      const out = [CSV_HEADER];
+      baseFs.features.forEach(f => { const b = f.attributes;
+        const c = adj[String(b.item_code||"").trim().toLowerCase()]
+               || adj[String(b.item_desc||"").trim().toLowerCase()];
+        out.push(csvRow(a, b, c, lastCount));
+      });
+      downloadCSV(`inventory_${a.equipment_id}_${today()}.csv`, out);
+    };
   } catch(e){ console.error(e); $("oBody").innerHTML = "Inventory unavailable: " + (e.message||e); }
 }
+
+// ---- CSV inventory export (per-asset above; fleet dialog honors the filters) ----
+const today = () => new Date().toISOString().slice(0,10);
+const csvCell = v => { v = v == null ? "" : String(v);
+  return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v; };
+function downloadCSV(name, rows){
+  const txt = "﻿" + rows.map(r => r.map(csvCell).join(",")).join("\r\n");  // BOM: Excel reads UTF-8
+  const url = URL.createObjectURL(new Blob([txt], {type:"text/csv;charset=utf-8"}));
+  const el = document.createElement("a");
+  el.href = url; el.download = name; document.body.appendChild(el); el.click();
+  setTimeout(() => { URL.revokeObjectURL(url); el.remove(); }, 4000);
+}
+const CSV_HEADER = ["Asset ID","Warehouse","Region","Category","Item Code","Item","Unit",
+  "Expected","Counted","Shortage","Critical","Replace-At","Condition","Notes",
+  "Last Count","Inspector"];
+function csvRow(a, b, c, lastCount){
+  const counted = c && c.counted_qty != null ? c.counted_qty
+    : (lastCount ? b.expected_qty : null);   // audited + untouched = present at expected
+  return [a.equipment_id, a.current_warehouse || a.staging_desc || "",
+    REGION_LABEL[a.hazmat_manager] || a.hazmat_manager || "",
+    catLabel(b.item_category), b.item_code || "", b.item_desc || "", b.item_unit || "",
+    b.expected_qty, counted, counted != null ? (b.expected_qty || 0) - counted : "",
+    b.critical_item === "yes" ? "yes" : "", b.replace_qty ?? "",
+    c ? (c.item_condition || "") : "", c ? (c.count_notes || "") : "",
+    lastCount ? fmtDate(lastCount.insp_date) : "",
+    lastCount ? (lastCount.inspector_name || "") : ""];
+}
+async function qPage(lyr, where, outFields, orderBy){
+  const out = [];
+  for (let off = 0;; off += 2000){
+    const fs = await lyr.queryFeatures({where, outFields,
+      orderByFields: orderBy, num: 2000, start: off});
+    out.push(...fs.features.map(f => f.attributes));
+    if (fs.features.length < 2000) break;
+  }
+  return out;
+}
+const inChunks = (arr, n) => { const o = []; for (let i = 0; i < arr.length; i += n) o.push(arr.slice(i, i + n)); return o; };
+
+window.openExportCSV = () => {
+  const xs = currentListItems();
+  openOverlay("Export Inventory CSV", {html: `
+    <div class="cd" style="margin-bottom:8px">Expected inventory overlaid with each asset's
+      latest audit count. The active list filters apply.</div>
+    <div style="font-size:14px;font-weight:700;margin-bottom:10px">${xs.length} asset${xs.length===1?"":"s"} in scope</div>
+    <label style="display:flex;gap:8px;align-items:center;padding:6px 0;font-size:13.5px">
+      <input type="checkbox" id="expCrit"> Critical items only</label>
+    <label style="display:flex;gap:8px;align-items:center;padding:6px 0;font-size:13.5px">
+      <input type="checkbox" id="expFlag"> Flagged rows only (shorts or condition issues)</label>
+    <button class="btn red" id="expGo" style="width:100%;margin-top:12px">Download CSV</button>
+    <div id="expStat" class="cd" style="margin-top:8px"></div>`});
+  $("expGo").onclick = async () => {
+    const critOnly = $("expCrit").checked, flagOnly = $("expFlag").checked;
+    const stat = m => { $("expStat").textContent = m; };
+    $("expGo").disabled = true;
+    try {
+      const ids = xs.map(x => "'" + x.attrs.equipment_id.replace(/'/g,"''") + "'");
+      let base = [];
+      for (const ch of inChunks(ids, 15)){
+        base = base.concat(await qPage(layers.baseline,
+          `asset_equipment_id IN (${ch.join(",")})`,
+          ["asset_equipment_id","item_code","item_desc","item_category","expected_qty",
+           "item_unit","critical_item","replace_qty"], ["asset_equipment_id","OBJECTID"]));
+        stat(`Loading baselines… ${base.length} items`);
+      }
+      if (!base.length){ stat("No baseline inventory in scope."); $("expGo").disabled = false; return; }
+      // latest whitelisted audit per asset
+      const latest = {};
+      for (const ch of inChunks(ids, 30)){
+        (await qPage(layers.insp,
+          `asset_equipment_id IN (${ch.join(",")}) AND insp_type='audit_inventory' AND app_version IN ${AUDIT_APPS}`,
+          ["GlobalID","asset_equipment_id","insp_date","inspector_name"], ["insp_date DESC"]))
+          .forEach(r => { const k = r.asset_equipment_id;
+            if (!latest[k] || (r.insp_date||0) > (latest[k].insp_date||0)) latest[k] = r; });
+      }
+      stat("Loading counts…");
+      const guids = Object.values(latest).map(l => "'{" + String(l.GlobalID).replace(/[{}]/g,"") + "}'");
+      const adjBy = {};   // asset -> key -> count row
+      const g2aid = {};
+      Object.values(latest).forEach(l => { g2aid[String(l.GlobalID).replace(/[{}]/g,"").toLowerCase()] = l.asset_equipment_id; });
+      for (const ch of inChunks(guids, 30)){
+        (await qPage(layers.counts, `parentglobalid IN (${ch.join(",")})`,
+          ["parentglobalid","item_code","item_desc","counted_qty","item_condition","count_notes"], null))
+          .forEach(c => { const aid = g2aid[String(c.parentglobalid).replace(/[{}]/g,"").toLowerCase()];
+            if (!aid) return;
+            const k = String(c.item_code || c.item_desc || "").trim().toLowerCase();
+            (adjBy[aid] = adjBy[aid] || {})[k] = c; });
+      }
+      const rows = [CSV_HEADER];
+      base.forEach(b => {
+        if (critOnly && b.critical_item !== "yes") return;
+        const x = byId[b.asset_equipment_id]; if (!x) return;
+        const lc = latest[b.asset_equipment_id] || null;
+        const adj = adjBy[b.asset_equipment_id] || {};
+        const c = adj[String(b.item_code||"").trim().toLowerCase()]
+               || adj[String(b.item_desc||"").trim().toLowerCase()];
+        if (flagOnly){
+          const short = c && c.counted_qty != null && c.counted_qty < (b.expected_qty||0);
+          const badCond = c && c.item_condition && c.item_condition !== "good";
+          if (!short && !badCond) return;
+        }
+        rows.push(csvRow(x.attrs, b, c, lc));
+      });
+      stat(`Ready — ${rows.length - 1} rows.`);
+      downloadCSV(`bnsf-inventory_${today()}.csv`, rows);
+    } catch(e){ console.error(e); stat("Export failed: " + (e.message||e)); }
+    $("expGo").disabled = false;
+  };
+};
 $("lnkInv").onclick = e => { e.preventDefault(); showInventory(); };
 $("btnInstr").onclick = () => openOverlay("Inspection & Maintenance Instructions", {url:"instructions.html"});
 $("btnInsp").onclick = () => openNativeDOT();
-// assets with a tailored Full Audit get the guided flow; others the free-entry count
-$("btnCount").onclick = () => {
-  const x = byId[selected];
-  if (x && (ASSET_SURVEYS[x.attrs.equipment_id]||{}).audit) openGuide();
-  else openSurvey("count");
-};
+// every audit-capable asset gets the guided flow — the native audit table
+// reads the baseline live, so tailored S123 forms are no longer a prerequisite
+$("btnCount").onclick = () => openGuide();
 $("btnIssue").onclick = () => openNativeIssue();
 
 // collapsible detail sections
@@ -768,78 +928,201 @@ const COND_ITEMS = ["Stop, turn and tail lights","Rear bumper","Side door","Rear
   "Lug nut tightness and condition","Wheel well","Spare tire","Tongue","Safety chains",
   "Electrical wiring connector","Breakaway braking device","Roof vent(s) and dome light(s)","Leaf springs",
   "Spring hangers / U-bolts","Stone guard","D-rings","Trailer jack","Interior moisture / condensation"];
+// shared print-sheet pieces (single-asset prep + multi-asset trip packet)
+const PREP_CSS = `
+  body{font-family:Segoe UI,Arial,sans-serif;font-size:12.5px;color:#111;max-width:820px;margin:24px auto;padding:0 16px}
+  h1{font-size:20px;border-bottom:3px solid #ee6e01;padding-bottom:6px} h1 small{color:#666;font-weight:400;font-size:13px}
+  h2{font-size:14px;margin:18px 0 6px;color:#ee6e01;text-transform:uppercase;letter-spacing:.05em}
+  table{width:100%;border-collapse:collapse} td,th{border:1px solid #bbb;padding:4px 8px;text-align:left;font-size:12px}
+  th{background:#f2f2f2} tr.sec td{background:#e8e8e8;font-weight:700} td.w{width:70px;background:#fafafa}
+  .cklist{columns:2;font-size:12px;column-gap:24px} .cklist div{padding:1.5px 0;break-inside:avoid}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 18px} .grid div b{color:#555}
+  .note{color:#666;font-style:italic;margin:4px 0}
+  .access{border:2px solid #ee6e01;border-radius:6px;padding:8px 12px;margin:8px 0;font-size:12.5px}
+  .pagebrk{page-break-before:always;margin-top:28px;border-top:1px dashed #ccc}
+  .noprint{margin:12px 0} @media print{.noprint{display:none} body{margin:6px}}`;
+const PRINT_BTN = `<div class="noprint"><button onclick="window.print()" style="padding:10px 22px;background:#ee6e01;color:#fff;border:none;border-radius:6px;font-weight:700;font-size:14px;cursor:pointer">Print</button></div>`;
+// visit scope, derived from which clocks the asset carries (same rule as the
+// audit-box buttons); the Jack-list DOT-only/No-DOT flags land in asset_notes
+function scopeOf(x){
+  const has = t => x.clocks.some(c => c.sched_type === t);
+  const dot = has("dot_inspection") || has("bit_inspection");
+  const inv = has("audit_inventory");
+  return dot && inv ? "Full — DOT + inventory audit" : dot ? "DOT only"
+       : inv ? "Inventory audit (no DOT)" : "see notes";
+}
+function prepIdentity(a){
+  const tires = [a.tire_size, a.tire_load_range ? "LR-" + a.tire_load_range : null,
+    a.tire_mfg_year ? "mfg " + a.tire_mfg_year : null,
+    a.tire_mfg_year ? "replace by " + (a.tire_mfg_year + 6) : null].filter(Boolean).join(" · ");
+  return `<div class="grid">
+    <div><b>Asset:</b> ${esc(a.asset_name)}</div><div><b>Type:</b> ${title(a.asset_type)}</div>
+    <div><b>Warehouse:</b> ${esc(a.current_warehouse)}</div><div><b>Address:</b> ${esc(a.staging_desc)}</div>
+    <div><b>Hazmat Mgr:</b> ${esc(a.hazmat_manager)}</div><div><b>Contractor:</b> ${esc(a.contractor_name)||"—"}</div>
+    <div><b>VIN:</b> ${esc(a.vin)||"—"}</div><div><b>Plate:</b> ${esc(a.plate_number)||"—"} ${esc(a.plate_state)}</div>
+    <div><b>Lock code:</b> ${esc(a.lock_code)||"______"}</div><div><b>Ball size:</b> ${esc(a.hitch_ball_size)||"______"}</div>
+    <div><b>Tires:</b> ${tires||"record this visit"}</div>
+    <div><b>Extinguishers:</b> ${[a.ext_count, a.ext_size].filter(v=>v!=null&&v!=="").join(" × ")||"record this visit"}</div>
+  </div>${a.asset_notes ? `<div class="access"><b>Access / site notes:</b> ${esc(a.asset_notes)}</div>` : ""}`;
+}
+function prepClockTable(x){
+  const rows = x.clocks.map(c =>
+    `<tr><td><b style="color:${COLORS[c.sched_status]||'#666'}">${title(c.sched_status)}</b></td>
+     <td>${tlabel(c.sched_type)}${c._via?" (on "+esc(c._via)+")":""}</td><td>${fmtDate(c.due_date)}</td>
+     <td>${c.sched_source==="derived"?"derived":""}</td></tr>`).join("");
+  return `<table><tr><th>Status</th><th>Clock</th><th>Due</th><th></th></tr>${rows||"<tr><td colspan=4>None on record</td></tr>"}</table>`;
+}
+const prepIssueList = issFs => issFs.features.map(f => { const i=f.attributes;
+  return `<li><b>[${i.issue_severity}]</b> ${esc(i.issue_desc)}${i.parts_needed?" — <b>bring:</b> "+esc(i.parts_needed):""}</li>`;
+}).join("") || "<li>No open issues on record.</li>";
+function prepInvSection(baseFs){
+  let invRows = "", lastCat = null;
+  baseFs.features.forEach(f => { const b=f.attributes;
+    const cat = catLabel(b.item_category);
+    if (cat !== lastCat){ invRows += `<tr class="sec"><td colspan="5">${esc(cat)}</td></tr>`; lastCat=cat; }
+    invRows += `<tr><td>${esc(b.item_desc)}</td><td>${esc(b.item_code)}</td><td style="text-align:center">${b.expected_qty??""}</td><td class="w"></td><td class="w"></td></tr>`;
+  });
+  return baseFs.features.length
+    ? `<h2>Expected inventory (${baseFs.features.length} line items — count against this)</h2>
+       <p class="note">Groups and order match the Audit Inventory survey. Record counts in the
+       Audit Inventory survey; this sheet is the offline fallback.</p>
+       <table><tr><th>Item</th><th>Item #</th><th>Expected</th><th>Counted</th><th>Replace</th></tr>${invRows}</table>`
+    : `<h2>Expected inventory</h2><p class="note">No baseline on file for this asset yet — record what you find in the Audit Inventory survey to establish one.</p>`;
+}
+const prepInstructions = () => `
+  <h2>Inspection instructions</h2>
+  <p class="note"><b>Before you go:</b> confirm the trailer's actual location with the mobilization contact
+  · know the lock code / key type (identity block above)
+  · bring tire pressure gauge, lug nut wrench, camera; for maintenance visits also filters, engine oil,
+  compressed air, waste-oil container, absorbent pads.</p>
+  <p style="font-size:12px"><b>Damage codes</b> (mark all exterior damage + photograph):
+  <b>B</b> Bruise · <b>C</b> Cut · <b>H</b> Hole · <b>D</b> Dent · <b>M</b> Missing</p>
+  <p style="font-size:12px"><b>Condition checklist</b> — mark each OK / Needs Repair / N/A in the DOT Annual survey:</p>
+  <div class="cklist">${COND_ITEMS.map(i=>`<div>&#9744; ${i}</div>`).join("")}</div>
+  <p class="note">Full procedures (generator, power pack, Kubota/Yanmar task lists, manual page refs):
+  https://whitewaterrescue.github.io/wri-bnsf-assets/instructions.html</p>`;
+async function prepFetch(x){
+  const guid = String(x.attrs.GlobalID).replace(/[{}]/g,"");
+  const [issFs, baseFs] = await Promise.all([
+    layers.issues.queryFeatures({where:`asset_guid='{${guid}}' AND issue_status IN ('open','in_progress')`,
+      outFields:["issue_severity","issue_desc","parts_needed"], num:200}),
+    layers.baseline.queryFeatures({where:`asset_guid='{${guid}}'`,
+      outFields:["item_category","item_desc","item_code","expected_qty"],
+      orderByFields:["OBJECTID"], num:2000}),  // workbook order = survey order
+  ]);
+  return {issFs, baseFs};
+}
 $("btnPrep").onclick = async () => {
   const x = byId[selected]; if (!x) return;
   const a = x.attrs;
-  const guid = String(a.GlobalID).replace(/[{}]/g,"");
   $("btnPrep").textContent = "Building prep sheet…";
   try {
-    const [issFs, baseFs] = await Promise.all([
-      layers.issues.queryFeatures({where:`asset_guid='{${guid}}' AND issue_status IN ('open','in_progress')`,
-        outFields:["issue_severity","issue_desc","parts_needed"], num:200}),
-      layers.baseline.queryFeatures({where:`asset_guid='{${guid}}'`,
-        outFields:["item_category","item_desc","item_code","expected_qty"],
-        orderByFields:["OBJECTID"], num:2000}),  // workbook order = survey order
-    ]);
-    const clockRows = x.clocks.map(c =>
-      `<tr><td><b style="color:${COLORS[c.sched_status]||'#666'}">${title(c.sched_status)}</b></td>
-       <td>${tlabel(c.sched_type)}${c._via?" (on "+esc(c._via)+")":""}</td><td>${fmtDate(c.due_date)}</td>
-       <td>${c.sched_source==="derived"?"derived":""}</td></tr>`).join("");
-    const issRows = issFs.features.map(f => { const i=f.attributes;
-      return `<li><b>[${i.issue_severity}]</b> ${esc(i.issue_desc)}${i.parts_needed?" — <b>bring:</b> "+esc(i.parts_needed):""}</li>`;
-    }).join("") || "<li>No open issues on record.</li>";
-    let invRows = "", lastCat = null;
-    baseFs.features.forEach(f => { const b=f.attributes;
-      const cat = catLabel(b.item_category);
-      if (cat !== lastCat){ invRows += `<tr class="sec"><td colspan="5">${esc(cat)}</td></tr>`; lastCat=cat; }
-      invRows += `<tr><td>${esc(b.item_desc)}</td><td>${esc(b.item_code)}</td><td style="text-align:center">${b.expected_qty??""}</td><td class="w"></td><td class="w"></td></tr>`;
-    });
-    const invSection = baseFs.features.length
-      ? `<h2>Expected inventory (${baseFs.features.length} line items — count against this)</h2>
-         <p class="note">Groups and order match the Audit Inventory survey. Baseline: 2017 workbook, stale until first recount. Record counts in the Audit Inventory survey; this sheet is the offline fallback.</p>
-         <table><tr><th>Item</th><th>Item #</th><th>Expected</th><th>Counted</th><th>Replace</th></tr>${invRows}</table>`
-      : `<h2>Expected inventory</h2><p class="note">No baseline on file for this asset yet — record what you find in the Audit Inventory survey to establish one.</p>`;
+    const {issFs, baseFs} = await prepFetch(x);
     const w = window.open("", "_blank");
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Prep — ${esc(a.equipment_id)}</title><style>
-      body{font-family:Segoe UI,Arial,sans-serif;font-size:12.5px;color:#111;max-width:820px;margin:24px auto;padding:0 16px}
-      h1{font-size:20px;border-bottom:3px solid #ee6e01;padding-bottom:6px} h1 small{color:#666;font-weight:400;font-size:13px}
-      h2{font-size:14px;margin:18px 0 6px;color:#ee6e01;text-transform:uppercase;letter-spacing:.05em}
-      table{width:100%;border-collapse:collapse} td,th{border:1px solid #bbb;padding:4px 8px;text-align:left;font-size:12px}
-      th{background:#f2f2f2} tr.sec td{background:#e8e8e8;font-weight:700} td.w{width:70px;background:#fafafa}
-      .cklist{columns:2;font-size:12px;column-gap:24px} .cklist div{padding:1.5px 0;break-inside:avoid}
-      .grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 18px} .grid div b{color:#555}
-      .note{color:#666;font-style:italic;margin:4px 0}
-      .noprint{margin:12px 0} @media print{.noprint{display:none} body{margin:6px}}
-      </style></head><body>
-      <div class="noprint"><button onclick="window.print()" style="padding:10px 22px;background:#ee6e01;color:#fff;border:none;border-radius:6px;font-weight:700;font-size:14px;cursor:pointer">Print</button></div>
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Prep — ${esc(a.equipment_id)}</title>
+      <style>${PREP_CSS}</style></head><body>
+      ${PRINT_BTN}
       <h1>Site Visit Prep — ${esc(a.equipment_id)} <small>generated ${new Date().toLocaleDateString()} · WRI BNSF Asset Readiness</small></h1>
-      <div class="grid">
-        <div><b>Asset:</b> ${esc(a.asset_name)}</div><div><b>Type:</b> ${title(a.asset_type)}</div>
-        <div><b>Warehouse:</b> ${esc(a.current_warehouse)}</div><div><b>Address:</b> ${esc(a.staging_desc)}</div>
-        <div><b>Hazmat Mgr:</b> ${esc(a.hazmat_manager)}</div><div><b>Contractor:</b> ${esc(a.contractor_name)||"—"}</div>
-        <div><b>VIN:</b> ${esc(a.vin)||"—"}</div><div><b>Plate:</b> ${esc(a.plate_number)||"—"} ${esc(a.plate_state)}</div>
-        <div><b>Lock code:</b> ${esc(a.lock_code)||"______"}</div><div><b>Tires:</b> mfg ${a.tire_mfg_year||"—"}</div>
-      </div>
+      ${prepIdentity(a)}
       <h2>Clocks this visit can close</h2>
-      <table><tr><th>Status</th><th>Clock</th><th>Due</th><th></th></tr>${clockRows||"<tr><td colspan=4>None on record</td></tr>"}</table>
-      <h2>Inspection instructions</h2>
-      <p class="note"><b>Before you go:</b> confirm the trailer's actual location with the mobilization contact
-      · know the lock code / key type (identity block above)
-      · bring tire pressure gauge, lug nut wrench, camera; for maintenance visits also filters, engine oil,
-      compressed air, waste-oil container, absorbent pads.</p>
-      <p style="font-size:12px"><b>Damage codes</b> (mark all exterior damage + photograph):
-      <b>B</b> Bruise · <b>C</b> Cut · <b>H</b> Hole · <b>D</b> Dent · <b>M</b> Missing</p>
-      <p style="font-size:12px"><b>Condition checklist</b> — mark each OK / Needs Repair / N/A in the DOT Annual survey:</p>
-      <div class="cklist">${COND_ITEMS.map(i=>`<div>&#9744; ${i}</div>`).join("")}</div>
-      <p class="note">Full procedures (generator, power pack, Kubota/Yanmar task lists, manual page refs):
-      https://whitewaterrescue.github.io/wri-bnsf-assets/instructions.html</p>
-      <h2>Bring list — open issues</h2><ul>${issRows}</ul>
-      ${invSection}
+      ${prepClockTable(x)}
+      ${prepInstructions()}
+      <h2>Bring list — open issues</h2><ul>${prepIssueList(issFs)}</ul>
+      ${prepInvSection(baseFs)}
       </body></html>`);
     w.document.close();
   } catch(e){ console.error(e); toast("Prep sheet failed: " + (e.message||e)); }
   $("btnPrep").textContent = "Site Visit Prep Sheet (printable)";
 };
+
+// ---- trip planner: pick several assets (tap in visit order) -> one printable packet ----
+function tripBarSync(){
+  let bar = $("tripBar");
+  if (!tripMode){ if (bar) bar.remove(); return; }
+  if (!bar){
+    bar = document.createElement("div");
+    bar.id = "tripBar";
+    bar.style.cssText = "position:fixed;left:12px;right:12px;bottom:calc(64px + env(safe-area-inset-bottom));"
+      + "z-index:60;background:var(--surface-alt);border:1px solid var(--accent);border-radius:10px;"
+      + "padding:10px 12px;display:flex;gap:10px;align-items:center;box-shadow:0 6px 18px rgba(0,0,0,.5)";
+    document.body.appendChild(bar);
+  }
+  bar.innerHTML = `<div style="flex:1;font-size:13px">Tap assets <b>in visit order</b>
+      — <b>${tripSel.size}</b> selected</div>
+    <button class="btn red" style="flex:none;padding:9px 14px;font-size:13px" id="tripGo"
+      ${tripSel.size ? "" : "disabled"}>Build trip sheet</button>
+    <button class="btn gray" style="flex:none;padding:9px 12px;font-size:13px" id="tripCancel">✕</button>`;
+  $("tripGo").onclick = () => buildTripSheet([...tripSel]);
+  $("tripCancel").onclick = () => toggleTripMode();
+}
+window.toggleTripMode = () => {
+  tripMode = !tripMode;
+  if (!tripMode) tripSel.clear();
+  const b = $("btnTrip");
+  if (b){ b.textContent = tripMode ? "Cancel trip" : "Plan trip"; b.classList.toggle("on", tripMode); }
+  if (tripMode) setTab("list");   // selection happens in the asset list
+  renderList(currentListItems());
+  tripBarSync();
+};
+// standard inspection-kit bring list (Trailer Inspection Procedure, 2023 edit)
+const TRIP_KIT = ["Pink zip ties (tote + door seals)","Standard zip ties","Spray paint — BLUE (50') and RED (100') for boom buckles",
+  "Red indicator tape + marker (boom deflector seal, label w/ counts, footage, date, initials)","Blank tote labels",
+  "Tire pressure gauge + lug wrench","Camera / phone (3 required audit photos)","Sea foam (power pack) + fuel stabilizer (generator)",
+  "Absorbent pads (skimmer function test)","Engine oil, filters, grease gun (maintenance visits)",
+  "Wheel chocks / jack pad","Fire extinguisher exchange units (if due)","DOT paperwork folder (1 copy stays with trailer)",
+  "This packet — one inventory sheet per asset"];
+async function buildTripSheet(eids){
+  const xs = eids.map(id => byId[id]).filter(Boolean);
+  if (!xs.length) return;
+  const go = $("tripGo"); if (go){ go.disabled = true; go.textContent = "Building…"; }
+  try {
+    const data = [];
+    for (const x of xs) data.push({x, ...(await prepFetch(x))});   // few assets — sequential is fine
+    const dirLink = x => {
+      if (!x.geom) return "";
+      const p = x.geom;
+      return ` — <a href="https://www.google.com/maps/dir/?api=1&destination=${p.latitude},${p.longitude}">directions</a>`;
+    };
+    const coverRows = data.map((d, i) => { const a = d.x.attrs;
+      const nIss = d.issFs.features.length;
+      return `<tr><td style="text-align:center"><b>${i+1}</b></td>
+        <td><b>${esc(a.equipment_id)}</b><br><span style="color:#666">${title(a.asset_type)}</span></td>
+        <td>${esc(a.current_warehouse)||""}<br>${esc(a.staging_desc)||""}${dirLink(d.x)}</td>
+        <td>${scopeOf(d.x)}</td>
+        <td>${esc(a.lock_code)||""}</td>
+        <td>${nIss ? `<b>${nIss}</b> open` : "—"}</td></tr>`;
+    }).join("");
+    // aggregate bring list: every open issue's parts + per-asset attribution
+    const bring = [];
+    data.forEach(d => d.issFs.features.forEach(f => { const i = f.attributes;
+      if (i.parts_needed) bring.push(`<li><b>${esc(d.x.attrs.equipment_id)}:</b> ${esc(i.parts_needed)}</li>`); }));
+    const sections = data.map((d, i) => { const a = d.x.attrs;
+      return `<div class="pagebrk"></div>
+        <h1>${i+1} / ${data.length} — ${esc(a.equipment_id)} <small>${scopeOf(d.x)}</small></h1>
+        ${prepIdentity(a)}
+        <h2>Clocks this visit can close</h2>${prepClockTable(d.x)}
+        <h2>Bring list — open issues</h2><ul>${prepIssueList(d.issFs)}</ul>
+        ${prepInvSection(d.baseFs)}`;
+    }).join("");
+    const w = window.open("", "_blank");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Trip — ${data.length} assets</title>
+      <style>${PREP_CSS}</style></head><body>
+      ${PRINT_BTN}
+      <h1>Inspection Trip Sheet <small>generated ${new Date().toLocaleDateString()} · ${data.length} assets · WRI BNSF Asset Readiness</small></h1>
+      <h2>Route (visit order)</h2>
+      <table><tr><th>#</th><th>Asset</th><th>Location</th><th>Scope</th><th>Lock</th><th>Issues</th></tr>${coverRows}</table>
+      <h2>What to bring — flagged parts</h2>
+      <ul>${bring.join("") || "<li>No open-issue parts flagged.</li>"}</ul>
+      <h2>Standard inspection kit</h2>
+      <div class="cklist">${TRIP_KIT.map(i=>`<div>&#9744; ${esc(i)}</div>`).join("")}</div>
+      ${prepInstructions()}
+      ${sections}
+      </body></html>`);
+    w.document.close();
+    toggleTripMode();
+  } catch(e){ console.error(e); toast("Trip sheet failed: " + (e.message||e)); tripBarSync(); }
+}
+
 window.openMaintS123 = (kind, equipGuid, equipId) => {
   openOverlay(`${SURVEY_TITLES[kind]} — ${equipId}`, {url:
     `https://survey123.arcgis.com/share/${SURVEYS[kind]}?` +
@@ -889,7 +1172,8 @@ async function renderGuide(x){
   const t0 = new Date(); t0.setHours(0,0,0,0);
   const eqG = x.equip.map(e => "'{"+String(e.GlobalID).replace(/[{}]/g,"")+"}'");
   const [audFs, issFs, mFs] = await Promise.all([
-    layers.insp.queryFeatures({where:`asset_guid='{${aguid}}' AND insp_type IN ('audit_inventory','asset_detail_check')`,
+    layers.insp.queryFeatures({where:`asset_guid='{${aguid}}' AND insp_type IN ('audit_inventory','asset_detail_check')`
+        + ` AND (insp_type <> 'audit_inventory' OR app_version IN ${AUDIT_APPS})`,
       outFields:["GlobalID","insp_date","insp_result","inspector_name","insp_type"],
       orderByFields:["insp_date DESC"], num:20}),
     layers.issues.queryFeatures({where:`asset_guid='{${aguid}}' AND issue_status IN ('open','in_progress') AND source_type='audit'`,
@@ -936,8 +1220,9 @@ async function renderGuide(x){
   html += step(!!auditToday, "Count against the item table — search, then edit the quantities that differ",
     latest ? `last audit ${fmtDate(latest.insp_date)} — ${verdictBadge(latest.insp_result)}` : "never audited",
     lbtn("openNativeAudit()"));
+  const s123kind = (ASSET_SURVEYS[a.equipment_id]||{}).audit ? "audit" : "count";
   html += `<div class="cd" style="margin:2px 0 8px">Poor signal at the trailer?
-    <a href="#" onclick="openSurvey('audit');return false" style="color:var(--deployed)">Use the Survey123 form instead</a>
+    <a href="#" onclick="openSurvey('${s123kind}');return false" style="color:var(--deployed)">Use the Survey123 form instead</a>
     — it can also be downloaded to the Survey123 field app for fully offline use.</div>`;
   html += cat(`Deficiencies (${issuesList.length} open)`);
   if (!issuesList.length){
@@ -947,7 +1232,7 @@ async function renderGuide(x){
   } else {
     html += crit.map(i => issRow(i, "var(--bad)")).join("")
           + rest.map(i => issRow(i, "var(--warn)")).join("");
-    if (itemIssues.length && (ASSET_SURVEYS[a.equipment_id]||{}).resolve)
+    if (itemIssues.length)   // native resolve table works from any baseline
       html += `<div style="margin-top:10px"><button class="btn red" style="width:100%"
         onclick="launchResolve()">Resolve deficiencies (${itemIssues.length} item${itemIssues.length>1?"s":""}) &#8594;</button></div>`;
     if (crit.some(i => /\[maint /.test(i.issue_desc)))
@@ -1121,6 +1406,17 @@ async function addRow(layer, attributes){
   if (!r || r.error) throw new Error(r && r.error ? r.error.message : "insert failed");
   return r;
 }
+async function uploadInspPhoto(objectId, file, name){
+  // REST addAttachment on the inspections table (JS API FeatureLayer has no
+  // attachment-add; same pattern as the DOT/issue forms)
+  const cred = await esriId.getCredential(PORTAL + "/sharing");
+  const fd = new FormData();
+  fd.append("attachment", file, name);
+  fd.append("f", "json"); fd.append("token", cred.token);
+  const up = await fetch(`${SVC}/2/${objectId}/addAttachment`, {method:"POST", body:fd})
+    .then(x => x.json());
+  if (!(up.addAttachmentResult || {}).success) throw new Error(JSON.stringify(up.error || up));
+}
 const nag = el => { el.scrollIntoView({block:"center"}); el.focus(); };
 const fallbackLink = fn => `<div class="cd" style="margin-bottom:10px">Poor signal or prefer the form?
   <a href="#" onclick="${fn};return false" style="color:var(--deployed)">Use the Survey123 version</a></div>`;
@@ -1167,6 +1463,48 @@ const HPP_YANMAR = [
   ["Battery electrolyte","Verify electrolyte level reaches bottom of vent walls."],
   ["Battery","Charge battery to 80 percent or greater voltage capacity."],
   ["Storage prep","Disconnect battery cables."]];
+// Asset-level maintenance task grids, keyed by sched_type — completing one
+// closes that clock. Task lists from the S: "Trailer Inspection Forms"
+// checklists (Oct 2023 edits). Native-only; free-entry S123 stays the fallback.
+const ASSET_MAINT = {
+  comms_trailer_maint: {label:"Comms Trailer Maint", code:"COMMS", tasks:[
+    ["Cisco C819GW-LTE router","Plug in, power on; check broadcast and internet connectivity with a mobile device."],
+    ["CradlePoint router","Plug in, power on; check broadcast and internet connectivity with a mobile device."],
+    ["Repeater radios (Kenwood NXR-710K)","Power on via 120v outlet on trailer exterior; check broadcast with a portable radio."],
+    ["Packset radios + chargers (Icom F3261DT)","Power on, check function; fully charge batteries, then remove from charger and store."],
+    ["Outdoor antenna (4G/LTE 5-in-1)","Inspect lights upon powering up the base radio and inverter."],
+    ["Cell signal booster","Inspect lights upon powering up the base radio and inverter."],
+    ["Antenna mast","Check and operate; stow and secure."],
+    ["Plotter printer (HP DesignJet T520)","Check components and ink expiration; gently shake ink cartridge."],
+    ["LaserJet printer (HP M281)","Check components and ink expiration; gently shake ink cartridge."],
+    ["Ink / toner stock","Restock expired ink and toner."],
+    ["Heating unit (Billings only)","Activate mid-October, deactivate early April; check thermostat and condition; lowest setting when on."]]},
+  ice_trailer_maint: {label:"Ice Trailer Maint", code:"ICE", tasks:[
+    ["STIHL MS461 chain saw","Refill bar oil and fuel (stabilize); clean sprocket nose, oil inlet and bar groove; rotate guide bar; clean cooling fins."],
+    ["Proactive 10HP ice saw sled","Check oil (change after 30 hours of use or annually); run fuel lines dry; check belts for wear."],
+    ["Electric ice augers + chargers","Test batteries; inspect augers for damage."],
+    ["3HP Honda capstan winch","Check oil (change after 30 hours of use or annually); run fuel lines dry."],
+    ["200' Dyneema rescue rope","Inspect for damage (contamination, cut sheath, deformation, friction burns); replace if found."]]},
+  hyd_reel_trailer_maint: {label:"Boom Reel Maint", code:"REEL", tasks:[
+    ["Qualitec reel — gear lube","Check gear lube on the reel; add as needed."],
+    ["Qualitec reel — grease fittings","Grease the zerk on the bearing / pillow block."],
+    ["HPU hydraulics","Replace hydraulic oil and hydraulic filter annually."],
+    ["Power pack motor — fluids","Check engine oil, fuel and coolant; top off or replace as needed."],
+    ["Power pack motor — service items","Check oil filter, air filter, drive belt and battery; replace as needed."],
+    ["Elastec reel — gearbox","Rotate reel until fill tube points up; check gearbox oil per manual procedure."],
+    ["Elastec reel — grease fittings","Grease both zerks (brake handle pivot tube underside; pivot top) — every 100 operating hours."]]},
+  airboat_maint: {label:"Airboat Maint", code:"AIRBT", tasks:[
+    ["Frame — nut and bolt check","Hand-check motor mounts and full nut/bolt check every 30 hours or every oil change."],
+    ["Engine — oil and belt","Change oil every 30 hours (Mobil synthetic); grease belt drive 1-2 pumps each oil change; keep radiator coolant full."],
+    ["Rudders and steering linkage","Grease zerks along the linkage; wipe excess; check rudder mountings for tightness and cracks."],
+    ["Port bow exterior","Bow eye, hull bolts/polymer, rivets and weld joints, cabin frame welds, interior runner welds (check for loose debris)."],
+    ["Port motor / cage","Battery OFF + key removed; engine mounts and frame; cage welds; hose clamps; wiring; air filter; exhaust; cooling system."],
+    ["Stern / transom","Propeller; rudder assembly; steering linkage; drain plugs; radiators; deck cleared; transom straps removed."],
+    ["Starboard motor / cage","Starter; alternator; fuel filters; oil filter; check oil; hose clamps; wiring; exhaust; cooling system."],
+    ["Starboard hull exterior","Hull bolts/polymer, rivets and weld joints, cabin frame welds, interior runner welds."],
+    ["Cabin — safety equipment","Throw bag; Type IV throwable; first aid kit; fire extinguisher; audio distress signal; flashlight and batteries."],
+    ["Cabin — gear","Seats/frames; paddles; boat hook; spare transom plug; tow/bow line; bumpers; area map; absorbent pads; extra fuel; loose items stowed."]]},
+};
 // (name, label) pairs must match the inspections table cond_* fields (schema_def)
 const CONDS = [
   ["cond_lights","Stop, Turn and Tail Lights"],["cond_rear_bumper","Rear Bumper"],
@@ -1188,7 +1526,8 @@ window.openNativeDetails = () => {
   openOverlay("Asset Details — " + a.equipment_id, {html:"", stack:true});
   const kv = [["Asset ID",a.equipment_id],["Warehouse",a.current_warehouse],
     ["Address",a.staging_desc],["Plate",[a.plate_number,a.plate_state].filter(Boolean).join(" ")],
-    ["VIN",a.vin],["Tire mfg year",a.tire_mfg_year]];
+    ["VIN",a.vin],["Tire mfg year",a.tire_mfg_year],["Ball size",a.hitch_ball_size],
+    ["Extinguishers",[a.ext_count, a.ext_size].filter(v => v != null && v !== "").join(" × ")]];
   $("oBody").innerHTML = fallbackLink("openSurvey('details')") +
     `<div class="kv" style="margin-bottom:12px">${kv.map(p =>
       `<div class="k">${p[0]}</div><div>${esc(p[1]) || "—"}</div>`).join("")}</div>
@@ -1197,6 +1536,27 @@ window.openNativeDetails = () => {
        <button class="btn gray" id="ndYes">Yes</button>
        <button class="btn gray" id="ndNo">No</button></div>
      <textarea id="ndFix" class="nfin" placeholder="What needs correcting? (required)" style="display:none;min-height:70px"></textarea>
+     ${a.asset_category === "trailer" ? `
+     <div class="invcat">Tow &amp; tire details — fill in or update</div>
+     <select id="ndBall" class="nfin">
+       <option value="">Hitch ball size — select</option>
+       ${['1-7/8"','2"','2-5/16"','pintle','gooseneck','n/a'].map(v =>
+         `<option value="${v}"${a.hitch_ball_size === v ? " selected" : ""}>${v === "n/a" ? "None / other" : v}</option>`).join("")}
+     </select>
+     <input id="ndTireYear" type="number" inputmode="numeric" class="nfin"
+       placeholder="Tire manufacture year (YYYY)" value="${a.tire_mfg_year || ""}">
+     <input id="ndTireSize" type="text" class="nfin"
+       placeholder="Tire size (e.g. ST225/75R15)" value="${esc(a.tire_size || "")}">
+     <select id="ndTireLR" class="nfin">
+       <option value="">Tire load range — select</option>
+       ${["B","C","D","E","F","G"].map(v =>
+         `<option value="${v}"${(a.tire_load_range || "") === v ? " selected" : ""}>Load range ${v}${v === "E" ? " (standard)" : ""}</option>`).join("")}
+     </select>` : ""}
+     <div class="invcat">Fire extinguishers aboard</div>
+     <input id="ndExtN" type="number" inputmode="numeric" class="nfin"
+       placeholder="How many?" value="${a.ext_count ?? ""}">
+     <input id="ndExtSize" type="text" class="nfin"
+       placeholder="Size(s), e.g. 5-LB ABC" value="${esc(a.ext_size || "")}">
      ${nfInput("ndWho","Inspector name",1)}${nfInput("ndAff","Affiliation / company")}
      <button class="btn red" id="ndSubmit" style="width:100%;margin-top:8px">Submit details check</button>`;
   let correct = true;
@@ -1215,12 +1575,33 @@ window.openNativeDetails = () => {
     if (!correct && !fix) return toast("Describe what needs correcting");
     $("ndSubmit").disabled = true;
     try {
+      // measurables write straight onto the assets row (empty inputs = no change)
+      const upd = {};
+      const put = (fld, v) => { if (v !== "" && v != null && v !== a[fld]) upd[fld] = v; };
+      if ($("ndBall")){
+        put("hitch_ball_size", $("ndBall").value);
+        const ty = parseInt($("ndTireYear").value, 10);
+        if (ty >= 1990 && ty <= 2100) put("tire_mfg_year", ty);
+        put("tire_size", $("ndTireSize").value.trim());
+        put("tire_load_range", $("ndTireLR").value);
+      }
+      const en = parseInt($("ndExtN").value, 10);
+      if (!isNaN(en) && en >= 0) put("ext_count", en);
+      put("ext_size", $("ndExtSize").value.trim());
+      if (Object.keys(upd).length){
+        const ur = await layers.assets.applyEdits({updateFeatures:[{attributes:
+          Object.assign({OBJECTID: a.OBJECTID}, upd)}]});
+        const u0 = (ur.updateFeatureResults || [])[0];
+        if (!u0 || u0.error) throw new Error(u0 && u0.error ? u0.error.message : "asset update failed");
+        Object.assign(a, upd);
+      }
       await addRow(layers.insp, {asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
         insp_type: "asset_detail_check", insp_status: "completed",
         insp_result: correct ? "pass" : "pass_with_issues", info_correct: correct ? "yes" : "no",
         insp_date: Date.now(), inspector_name: who,
         inspector_affiliation: $("ndAff").value.trim() || null,
-        insp_notes: (correct ? "Details confirmed" : "INFO CORRECTIONS: " + fix).slice(0,1000),
+        insp_notes: ((correct ? "Details confirmed" : "INFO CORRECTIONS: " + fix)
+          + (Object.keys(upd).length ? " [updated: " + Object.keys(upd).join(", ") + "]" : "")).slice(0,1000),
         app_version: "viewer-details", source_device: "browser"});
       toast("Details check submitted");
       history.back();
@@ -1302,6 +1683,67 @@ window.openNativeMaint = (kind, equipGuid, equipId) => {
       history.back();
     } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
       $("nmSubmit").disabled = false; $("nmSubmit").textContent = "Submit maintenance"; }
+  };
+};
+
+// ---- native asset-level maintenance (comms / ice / boom reel / airboat task grids)
+window.openNativeAssetMaint = (kind) => {
+  const x = byId[selected]; if (!x) return;
+  const a = x.attrs, cfg = ASSET_MAINT[kind];
+  if (!cfg) return;
+  openOverlay(`${cfg.label} — ${a.equipment_id}`, {html:""});
+  const taskRow = (t, i) => `<div class="taskrow" data-i="${i}">
+    <div class="tlab"><b>${esc(t[0])}</b> — <span style="color:var(--text-dim)">${esc(t[1])}</span></div>
+    <select data-tsel="1"><option value="completed">Completed</option><option value="failed">Failed</option>
+      <option value="skipped">Skipped</option><option value="na">N/A</option></select>
+    <input type="text" placeholder="What failed / notes"></div>`;
+  $("oBody").innerHTML =
+    nfInput("amWho","Performed by",1) + nfInput("amAff","Affiliation / company") +
+    `<div class="invcat">${esc(cfg.label)} tasks</div>` +
+    cfg.tasks.map(taskRow).join("") +
+    `<div id="amStat" class="cd" style="margin-top:8px">0 failed</div>
+     ${nfInput("amParts","Parts / materials used")}
+     <textarea id="amNotes" class="nfin" placeholder="Overall notes" style="min-height:60px"></textarea>
+     <button class="btn red" id="amSubmit" style="width:100%;margin:10px 0">Submit maintenance</button>`;
+  $("oBody").onchange = e => {
+    if (!e.target.dataset.tsel) return;
+    const f = e.target.value === "failed";
+    e.target.closest(".taskrow").classList.toggle("failed", f);
+    const n = [...$("oBody").querySelectorAll(".taskrow select")].filter(s => s.value === "failed").length;
+    $("amStat").innerHTML = n ? `<b style="color:var(--bad)">${n} failed — will flag CRITICAL</b>` : "0 failed";
+  };
+  $("amSubmit").onclick = async () => {
+    const who = $("amWho").value.trim();
+    if (!who) return toast("Performed by is required");
+    $("amSubmit").disabled = true; $("amSubmit").textContent = "Submitting…";
+    try {
+      const tasks = [...$("oBody").querySelectorAll(".taskrow")].map(r => {
+        const t = cfg.tasks[+r.dataset.i];
+        return {desc: t[0] + ": " + t[1], status: r.querySelector("select").value,
+                notes: r.querySelector("input").value.trim()};
+      });
+      const nfail = tasks.filter(t => t.status === "failed").length;
+      const parts = $("amParts").value.trim(), notes = $("amNotes").value.trim();
+      const ev = await addRow(layers.maint, {
+        asset_equipment_id: a.equipment_id,        // no equipment unit — the trailer itself
+        equip_id: `${a.equipment_id} ${cfg.label}`, maint_kind: kind,
+        event_type: "annual", event_date: Date.now(), performed_by: who,
+        performer_affiliation: $("amAff").value.trim() || null,
+        maint_status: nfail ? "completed_issues" : "completed",
+        event_notes: ((notes + (parts ? " Parts used: " + parts : "")).trim() || null),
+        app_version: "viewer-maint-v3", source_device: "browser"});
+      const pg = "{" + String(ev.globalId).replace(/[{}]/g,"") + "}";
+      const kr = await layers.mtasks.applyEdits({addFeatures: tasks.map((t, i) => ({attributes:{
+        parentglobalid: pg, task_code: `${cfg.code}-${i + 1}`, task_desc: t.desc.slice(0,255),
+        task_status: t.status, task_notes: t.notes || null}}))});
+      const bad = kr.addFeatureResults.filter(r => r.error);
+      if (bad.length) throw new Error("task rows failed: " + bad[0].error.message);
+      toast(nfail ? `Submitted — ${nfail} FAILED task(s) will flag critical`
+                  : "Maintenance submitted — all tasks passed");
+      try { await processAssetAudit(x); } catch(pe){ console.warn(pe); }
+      history.back();
+    } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
+      $("amSubmit").disabled = false; $("amSubmit").textContent = "Submit maintenance"; }
   };
 };
 
@@ -1410,6 +1852,18 @@ window.openNativeAudit = async () => {
           <input id="an${i}" type="text" placeholder="Notes">
         </div></div>`;
     }).join("");
+    // 3 required photos (client 2026-07-22); labels adapt off-trailer since
+    // connexes/kits have no plate
+    const phSlots = a.asset_category === "trailer" ? [
+      ["area",  "1. Area photo — trailer visible in its surroundings"],
+      ["front", "2. Front of trailer — trailer ID visible"],
+      ["rear",  "3. Back of trailer — license plate visible"],
+    ] : [
+      ["area",  "1. Area photo — asset visible in its surroundings"],
+      ["front", "2. Asset ID marking / placard visible"],
+      ["rear",  "3. Second angle — doors or contents"],
+    ];
+    const phFiles = {};   // slot -> File ; extras under 'extra' as an array
     $("oBody").innerHTML = `
       <div class="audhead">
         <input id="audWho" type="text" placeholder="Inspector name (required)">
@@ -1420,9 +1874,25 @@ window.openNativeAudit = async () => {
       <div style="display:flex;gap:8px;font-size:11px;color:var(--text-muted);padding:4px 0;text-transform:uppercase;letter-spacing:.05em">
         <div style="flex:1">Contents</div><div style="width:52px;text-align:right">Expect</div><div style="width:72px;text-align:center">Actual</div></div>
       ${rowsHtml}
-      <button class="btn red" id="audSubmit" style="width:100%;margin:14px 0">Submit audit</button>
-      <div class="cd" style="margin-bottom:14px">Every item starts at its expected quantity — change only what
-      differs. Entries are lost if you leave this page before submitting.</div>`;
+      <div class="invcat">Photos — all 3 required</div>
+      ${phSlots.map(([k, lbl]) => `
+        <label class="phslot" id="ph_${k}" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
+          <input type="file" accept="image/*" capture="environment" data-slot="${k}" style="display:none">
+          <img id="phimg_${k}" style="display:none;width:56px;height:56px;object-fit:cover;border-radius:6px;flex:none">
+          <span id="phtick_${k}" style="font-weight:800;font-size:16px;color:var(--text-muted);flex:none">○</span>
+          <span style="flex:1;font-size:13.5px">${lbl}</span>
+          <span class="btn gray" style="flex:none;padding:7px 12px;font-size:12px;pointer-events:none">Take photo</span>
+        </label>`).join("")}
+      <label class="phslot" style="display:flex;align-items:center;gap:10px;padding:8px 0;cursor:pointer">
+        <input type="file" accept="image/*" multiple data-slot="extra" style="display:none">
+        <span style="flex:1;font-size:13px;color:var(--text-dim)">Optional extras — VIN, GPS unit, asset tag, damage
+          <span id="phextraN"></span></span>
+        <span class="btn gray" style="flex:none;padding:7px 12px;font-size:12px;pointer-events:none">Add</span>
+      </label>
+      <button class="btn red" id="audSubmit" style="width:100%;margin:14px 0" disabled>Submit audit</button>
+      <div class="cd" id="audHint" style="margin-bottom:14px">Every item starts at its expected quantity — change only what
+      differs. All 3 photos are required before you can submit.
+      Entries are lost if you leave this page before submitting.</div>`;
     const critOf = i => items[i].critical_item === "yes";
     const threshOf = i => items[i].replace_qty ?? items[i].expected_qty ?? 1;
     const stat = () => {
@@ -1438,6 +1908,30 @@ window.openNativeAudit = async () => {
       });
       $("audStat").innerHTML = `${nd} deviation${nd === 1 ? "" : "s"}${nc ? ` · <b style="color:var(--bad)">${nc} critical</b>` : ""}`;
       return {nd, nc};
+    };
+    const phReady = () => phSlots.every(([k]) => phFiles[k]);
+    const phSync = () => {
+      $("audSubmit").disabled = !phReady();
+      $("audHint").innerHTML = phReady()
+        ? "Entries are lost if you leave this page before submitting."
+        : "Every item starts at its expected quantity — change only what differs. "
+          + "<b>All 3 photos are required before you can submit.</b> "
+          + "Entries are lost if you leave this page before submitting.";
+    };
+    $("oBody").onchange = e => {
+      const slot = e.target.dataset && e.target.dataset.slot;
+      if (!slot || !e.target.files || !e.target.files.length) return;
+      if (slot === "extra"){
+        phFiles.extra = (phFiles.extra || []).concat([...e.target.files]);
+        $("phextraN").textContent = ` — ${phFiles.extra.length} added`;
+      } else {
+        phFiles[slot] = e.target.files[0];
+        const img = $("phimg_" + slot);
+        img.src = URL.createObjectURL(phFiles[slot]); img.style.display = "";
+        const tick = $("phtick_" + slot);
+        tick.textContent = "✓"; tick.style.color = "var(--ok)";
+      }
+      phSync();
     };
     $("oBody").oninput = e => {
       if (e.target.classList.contains("aq")) stat();
@@ -1458,6 +1952,7 @@ window.openNativeAudit = async () => {
     $("audSubmit").onclick = async () => {
       const who = $("audWho").value.trim();
       if (!who) return toast("Inspector name is required");
+      if (!phReady()) return toast("All 3 photos are required");
       const {nd, nc} = stat();
       $("audSubmit").disabled = true; $("audSubmit").textContent = "Submitting…";
       try {
@@ -1490,8 +1985,28 @@ window.openNativeAudit = async () => {
           const bad = kr.addFeatureResults.filter(r => r.error);
           if (bad.length) throw new Error("deviation rows failed: " + bad[0].error.message);
         }
+        // photos: the audit row is already in — a failed upload must not lose it
+        $("audSubmit").textContent = "Uploading photos…";
+        const uploads = phSlots.map(([k]) => [k, phFiles[k]])
+          .concat((phFiles.extra || []).map((f, n) => ["extra" + (n + 1), f]));
+        const failed = [];
+        for (const [k, f] of uploads){
+          const ext = (f.name || "").match(/\.\w{2,5}$/) ? f.name.match(/\.\w{2,5}$/)[0] : ".jpg";
+          const nm = `audit-${k}_${a.equipment_id}${ext}`;
+          try { await uploadInspPhoto(ar.objectId, f, nm); }
+          catch(e1){
+            try { await uploadInspPhoto(ar.objectId, f, nm); }   // one retry
+            catch(e2){ console.error(e2); failed.push(k); }
+          }
+        }
+        if (failed.length)
+          await layers.insp.applyEdits({updateFeatures:[{attributes:{OBJECTID: ar.objectId,
+            insp_notes: `Full audit: ${nd} deviation(s), ${nc} critical. `
+                      + `[photo upload failed: ${failed.join(", ")}]`}}]})
+            .catch(e => console.error(e));
         toast(`Audit submitted — ${result === "pass" ? "all items present" :
-          nd + " deviation(s)" + (nc ? ", " + nc + " CRITICAL" : "")}`);
+          nd + " deviation(s)" + (nc ? ", " + nc + " CRITICAL" : "")}`
+          + (failed.length ? ` (${failed.length} photo(s) failed to upload)` : ""));
         history.back();  // pops to the guide layer, which re-checks status
       } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
         $("audSubmit").disabled = false; $("audSubmit").textContent = "Submit audit"; }
@@ -1504,7 +2019,7 @@ window.openNativeAudit = async () => {
 // criticals, notes and the audit clock honest the same day forms come in
 async function processAssetAudit(x){
   const a = x.attrs;
-  if (!(ASSET_SURVEYS[a.equipment_id]||{}).audit) return;
+  if (!x.clocks.length && !x.equip.length) return;   // nothing to advance
   const aguid = String(a.GlobalID).replace(/[{}]/g,"");
   const allIssFs = await layers.issues.queryFeatures({
     where:`asset_guid='{${aguid}}' AND source_type='audit'`,
@@ -1516,7 +2031,7 @@ async function processAssetAudit(x){
 
   // 1. audits -> issues
   const audFs = await layers.insp.queryFeatures({
-    where:`asset_guid='{${aguid}}' AND insp_type='audit_inventory' AND app_version IN ('s123-audit-v2','viewer-audit-v3')`,
+    where:`asset_guid='{${aguid}}' AND insp_type='audit_inventory' AND app_version IN ${AUDIT_APPS}`,
     outFields:["GlobalID","insp_result","insp_date","inspector_name"],
     orderByFields:["insp_date DESC"], num:10});
   for (const f of audFs.features){
@@ -1526,9 +2041,14 @@ async function processAssetAudit(x){
     if (tags.has(tag)) continue;
     const kids = await layers.counts.queryFeatures({
       where:`parentglobalid='{${String(ins.GlobalID).replace(/[{}]/g,"")}}'`,
-      outFields:["item_code","item_desc","expected_qty","counted_qty","shortage_qty","count_notes"], num:500});
+      outFields:["item_code","item_desc","expected_qty","counted_qty","shortage_qty","item_condition","count_notes"], num:500});
     kids.features.forEach(kf => { const k = kf.attributes;
       const critFlag = String(k.count_notes||"").startsWith("[CRITICAL]");
+      // only true deviations become issues — full-count forms (s123-beta)
+      // submit every row, most of which are fine
+      const short = (k.shortage_qty||0) > 0 || (k.counted_qty||0) < (k.expected_qty||0);
+      const badCond = !["","good","none"].includes(String(k.item_condition||"").toLowerCase());
+      if (!(critFlag || short || badCond)) return;
       const note = String(k.count_notes||"").replace("[CRITICAL] ","").trim();
       adds.push({attributes:{asset_guid:a.GlobalID, asset_equipment_id:a.equipment_id,
         issue_status:"open", issue_severity: critFlag ? "critical" : "minor",
@@ -1539,16 +2059,16 @@ async function processAssetAudit(x){
     });
   }
 
-  // 2. failed maintenance tasks -> critical issues
+  // 2. failed maintenance tasks -> critical issues (equipment units + the
+  // asset-level grids, which carry asset_equipment_id and no equip_guid)
   const eqG = x.equip.map(e => "'{"+String(e.GlobalID).replace(/[{}]/g,"")+"}'");
-  let events = [];
-  if (eqG.length){
-    const mFs = await layers.maint.queryFeatures({
-      where:`equip_guid IN (${eqG.join(",")}) AND (app_version LIKE 's123%' OR app_version LIKE 'viewer%')`,
-      outFields:["GlobalID","equip_guid","equip_id","event_date","performed_by"],
-      orderByFields:["event_date DESC"], num:100});
-    events = mFs.features.map(f => f.attributes);
-  }
+  const evScope = [`asset_equipment_id='${a.equipment_id.replace(/'/g,"''")}'`]
+    .concat(eqG.length ? [`equip_guid IN (${eqG.join(",")})`] : []);
+  const mFs = await layers.maint.queryFeatures({
+    where:`(${evScope.join(" OR ")}) AND (app_version LIKE 's123%' OR app_version LIKE 'viewer%')`,
+    outFields:["GlobalID","equip_guid","equip_id","maint_kind","asset_equipment_id","event_date","performed_by"],
+    orderByFields:["event_date DESC"], num:100});
+  const events = mFs.features.map(f => f.attributes);
   const evFailed = {};
   if (events.length){
     const evG = events.map(e => "'{"+String(e.GlobalID).replace(/[{}]/g,"")+"}'");
@@ -1631,9 +2151,11 @@ async function processAssetAudit(x){
   if (latest && !critOpen)
     advance(x.clocks.find(c => c.sched_type === "audit_inventory" && !c._via),
             latest.insp_date, latest.GlobalID);
-  // 5b. details / DOT / BIT inspections
-  const INSP_SCHED = {asset_detail_check:"asset_detail_check",
-                      dot_annual:"dot_inspection", bit_annual:"bit_inspection"};
+  // 5b. details / DOT / BIT inspections. A details confirm verifies the
+  // asset's plate/VIN/ID hands-on, so it also closes the asset-level
+  // equip_id_verify clock (Cody decision 2026-07-22).
+  const INSP_SCHED = {asset_detail_check:["asset_detail_check","equip_id_verify"],
+                      dot_annual:["dot_inspection"], bit_annual:["bit_inspection"]};
   const othFs = await layers.insp.queryFeatures({
     where:`asset_guid='{${aguid}}' AND insp_type IN ('asset_detail_check','dot_annual','bit_annual')`
       + ` AND insp_status='completed' AND (app_version LIKE 's123%' OR app_version LIKE 'viewer%')`,
@@ -1641,10 +2163,11 @@ async function processAssetAudit(x){
     orderByFields:["insp_date DESC"], num:30});
   const bestBy = {};
   othFs.features.forEach(f => { const r = f.attributes;
-    const st = INSP_SCHED[r.insp_type];
-    if (st && r.insp_result !== "fail" && !bestBy[st]) bestBy[st] = r; });
-  for (const [st, r] of Object.entries(bestBy))
-    advance(x.clocks.find(c => c.sched_type === st && !c._via), r.insp_date, r.GlobalID);
+    if (INSP_SCHED[r.insp_type] && r.insp_result !== "fail" && !bestBy[r.insp_type])
+      bestBy[r.insp_type] = r; });
+  for (const [it, r] of Object.entries(bestBy))
+    INSP_SCHED[it].forEach(st =>
+      advance(x.clocks.find(c => c.sched_type === st && !c._via), r.insp_date, r.GlobalID));
   // 5c. clean maintenance events close that equipment's maint clock
   const EQ_SCHED = {generator:"generator_maint", hyd_power_pack:"hpp_maint",
                     fire_pump:"fire_pump_maint", air_compressor:"compressor_maint"};
@@ -1660,6 +2183,13 @@ async function processAssetAudit(x){
     ["equip_id_verify", "asset_detail_check"].forEach(vt =>
       advance(x.clocks.find(c => c.sched_type === vt && c._via === e.equip_id),
               ev.event_date, ev.GlobalID));
+  });
+  // 5d. asset-level maintenance grids close the matching trailer-maint clock
+  Object.keys(ASSET_MAINT).forEach(kind => {
+    const ev = events.find(v => v.maint_kind === kind && !v.equip_guid
+                             && !evFailed[g8s(v.GlobalID)]);  // events sorted DESC
+    if (ev) advance(x.clocks.find(c => c.sched_type === kind && !c._via),
+                    ev.event_date, ev.GlobalID);
   });
   if (clockUpdates.length){
     await layers.sched.applyEdits({updateFeatures: clockUpdates});
@@ -1961,10 +2491,13 @@ function buildStats(){
           <div class="s">${e.eid || ""}${e.who ? " · " + esc(e.who) : ""}</div></div>
           <div class="due">${fmtDate(e.t)}</div></div>`).join("")
         || "<div class='cd' style='padding:6px 12px'>No recent activity</div>")}</div>
-    <div style="margin-top:12px"><a href="#" id="statsInstr" style="color:var(--deployed);font-size:12.5px;font-weight:600">Inspection &amp; maintenance instructions →</a></div>`;
+    <div style="margin-top:12px;display:flex;gap:16px;flex-wrap:wrap">
+      <a href="#" id="statsInstr" style="color:var(--deployed);font-size:12.5px;font-weight:600">Inspection &amp; maintenance instructions →</a>
+      <a href="#" id="statsCsv" style="color:var(--deployed);font-size:12.5px;font-weight:600">Export inventory CSV →</a></div>`;
 
   $("statsInstr").onclick = e => { e.preventDefault();
     openOverlay("Inspection & Maintenance Instructions", {url:"instructions.html"}); };
+  $("statsCsv").onclick = e => { e.preventDefault(); openExportCSV(); };
   $("statsPanel").querySelectorAll(".tile.click").forEach(t =>
     t.onclick = () => { statsDrill = statsDrill === t.dataset.drill ? null : t.dataset.drill; buildStats(); });
   const dc = $("drillClear");
