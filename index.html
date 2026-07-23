@@ -2760,22 +2760,44 @@ async function loadPhotos(x){
       const res = await lyr.queryAttachments({objectIds: ids.slice(-100)}).catch(() => ({}));
       Object.entries(res).forEach(([oid, list]) => (list || []).forEach(at =>
         atts.push({url: `${base}/${oid}/attachments/${at.id}?token=${cred.token}`,
-                   name: at.name || "", id: at.id})));
+                   name: at.name || "", id: at.id, base, oid})));
     }
     if (x.attrs.equipment_id !== selected) return;
     if (!atts.length){
       host.innerHTML = "<span style='color:var(--text-muted)'>No photos on record</span>";
       return;
     }
-    host.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:8px">` +
-      atts.sort((p,q) => q.id - p.id).slice(0, 24).map(at =>
-        /\.pdf$/i.test(at.name)
+    const admin = window.isAdmin && window.viewMode === "admin";
+    const del = admin ? (n =>
+      `<button data-phdel="${n}" title="Delete this photo (admin)"
+        style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;border:none;background:var(--bad);color:#fff;font-size:11px;font-weight:800;cursor:pointer;line-height:1">✕</button>`) : (() => "");
+    const shown = atts.sort((p,q) => q.id - p.id).slice(0, 24);
+    host.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:10px">` +
+      shown.map((at, n) =>
+        `<span style="position:relative;display:inline-block">` + (/\.pdf$/i.test(at.name)
           ? `<a href="${at.url}" target="_blank" rel="noopener" title="${esc(at.name)}"
               style="width:64px;height:64px;display:flex;align-items:center;justify-content:center;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text-dim);font-size:10px;font-weight:700">PDF</a>`
           : `<a href="${at.url}" target="_blank" rel="noopener" title="${esc(at.name)}">
               <img src="${at.url}" loading="lazy" alt=""
-                style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block"></a>`
+                style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block"></a>`)
+        + del(n) + `</span>`
       ).join("") + `</div>`;
+    if (admin) host.querySelectorAll("[data-phdel]").forEach(btn => btn.onclick = async ev => {
+      ev.preventDefault();
+      const at = shown[+btn.dataset.phdel];
+      if (!confirm(`Delete "${at.name || "this photo"}" permanently?`)) return;
+      try {
+        const c2 = await esriId.getCredential(PORTAL + "/sharing");
+        const fd = new FormData();
+        fd.append("attachmentIds", at.id); fd.append("f", "json"); fd.append("token", c2.token);
+        const r = await fetch(`${at.base}/${at.oid}/deleteAttachments`, {method:"POST", body:fd})
+          .then(q => q.json());
+        const ok = (r.deleteAttachmentResults || []).every(q => q.success);
+        if (!ok) throw new Error(JSON.stringify(r.error || r));
+        toast("Photo deleted");
+        loadPhotos(x);
+      } catch(e){ console.error(e); toast("Delete failed: " + (e.message||e)); }
+    });
   } catch(e){ console.error(e); host.textContent = "Photos unavailable"; }
 }
 
