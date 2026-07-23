@@ -727,10 +727,15 @@ $("oBack").onclick = () => {
 window.addEventListener("popstate", e => {
   if (!$("overlay").classList.contains("open")) return;
   const x = byId[selected];
-  if (e.state && e.state.wriOverlay && ovDepth > 1 && x){
-    ovDepth = 1;
-    if (!guideShowing) showGuideContent(x);  // child popped -> back to the guide
-  } else closeOverlay(true);
+  if (e.state && e.state.wriOverlay){
+    // landed on one of OUR overlay entries — never close here. (The oBack
+    // handler renders the guide and then history.back()s to resync; this
+    // event must not undo that render.)
+    if (ovDepth > 1 && x && !guideShowing){
+      ovDepth = 1;
+      showGuideContent(x);                   // child popped -> back to the guide
+    } else ovDepth = Math.min(ovDepth, e.state.wriOverlay);
+  } else closeOverlay(true);                 // popped below the overlay -> close
 });
 
 function openSurvey(kind, extra){
