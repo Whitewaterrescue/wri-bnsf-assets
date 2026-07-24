@@ -380,8 +380,8 @@ async function qAll(lyr, outFields, geom){
   return fs.features;
 }
 
-async function boot(){
-  if (NAVTEST) return;
+async function boot(force){
+  if (NAVTEST && !force) return;
   await esriId.checkSignInStatus(PORTAL + "/sharing").catch(() => esriId.getCredential(PORTAL + "/sharing"));
   const cred = await esriId.getCredential(PORTAL + "/sharing");
   $("who").textContent = cred.userId;
@@ -851,6 +851,13 @@ document.addEventListener("input", e => {
 // the guide's Back behavior can be regression-tested without an AGOL login
 window.__navtest = {
   openOverlay, afterSubmitToGuide,
+  // screenshot/QA harness: boot with an externally supplied (already valid)
+  // token instead of the redirect flow — grants nothing the caller lacks
+  bootWithToken: (token, userId) => {
+    esriId.registerToken({server: PORTAL + "/sharing/rest", token, userId,
+                          expires: Date.now() + 30 * 60000, ssl: true});
+    return boot(true);
+  },
   state: () => ({ovDepth, guideShowing, open: $("overlay").classList.contains("open"),
                  title: $("oTitle").textContent}),
   stub: id => { byId[id] = {attrs:{equipment_id:id, GlobalID:"{0}"}, equip:[], clocks:[]}; selected = id; },
