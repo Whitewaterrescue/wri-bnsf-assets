@@ -854,6 +854,7 @@ window.__navtest = {
   // screenshot/QA harness: boot with an externally supplied (already valid)
   // token instead of the redirect flow — grants nothing the caller lacks
   bootWithToken: (token, userId) => {
+    window.__navlive = true;   // token-booted: render everything for real
     esriId.registerToken({server: PORTAL + "/sharing/rest", token, userId,
                           expires: Date.now() + 30 * 60000, ssl: true});
     return boot(true);
@@ -1597,7 +1598,7 @@ function openGuide(){
 window.openGuideRefresh = () => { const x = byId[selected]; if (x) showGuideContent(x); };
 
 async function renderGuide(x){
-  if (NAVTEST){ $("oBody").innerHTML = "guide (navtest stub)"; return; }
+  if (NAVTEST && !window.__navlive){ $("oBody").innerHTML = "guide (navtest stub)"; return; }
   const a = x.attrs;
   const aguid = String(a.GlobalID).replace(/[{}]/g,"");
   try { await processAssetAudit(x); } catch(e){ console.warn("live processing skipped:", e); }
