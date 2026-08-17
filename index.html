@@ -1230,14 +1230,16 @@ window.openAdminBaseline = async () => {
 // rows in inventory_counts — see openNativeAudit). Membership lives on
 // inventory_baseline.bin_code; identity + seal state on the inventory_bins
 // table (/13). Called plain from the inventory overlay (swaps in place, like
-// openAdminBaseline) or with stack=true from the audit guide (depth-2 child).
-window.openBinManager = async (stack) => {
+// openAdminBaseline), with from=true from the audit guide (stacks to depth-2
+// child), or from="audit" mid-walk (swaps the depth-2 audit in place and shows
+// a Return-to-walk button — openNativeAudit re-renders fresh with new bins).
+window.openBinManager = async (from) => {
   const x = byId[selected]; if (!x) return;
   const a = x.attrs;
   const guid = String(a.GlobalID).replace(/[{}]/g,"");
   openOverlay("Bins — " + a.equipment_id,
     Object.assign({html:"<div style='color:var(--text-dim)'>Loading bins…</div>"},
-                  stack ? {stack:true} : {}));
+                  from ? {stack:true} : {}));
   let bins = [], rows = [];
   const load = async () => {
     const [binFs, baseFs] = await Promise.all([
@@ -1256,6 +1258,7 @@ window.openBinManager = async (stack) => {
   const renderMain = () => {
     $("oTitle").textContent = "Bins — " + a.equipment_id;
     $("oBody").innerHTML = `
+      ${from === "audit" ? `<button class="btn red" id="bnReturn" style="width:100%;margin-bottom:10px">&#8592; Return to the inventory walk</button>` : ""}
       <div class="cd" style="margin-bottom:8px">A bin groups inventory items that are physically
       sealed together in the trailer. During an audit, an intact seal counts every item in the
       bin as present — no individual counting. A broken seal expands the bin back to
@@ -1281,6 +1284,8 @@ window.openBinManager = async (stack) => {
       </div>
       <div class="cd" style="margin-top:6px">Create the bin, add its items, physically seal it in
       the trailer, then tap Seal here — the next audit will verify the seal.</div>`;
+    const ret = $("bnReturn");
+    if (ret) ret.onclick = () => openNativeAudit();   // re-renders fresh with the new bins
     $("bnCreate").onclick = async () => {
       const label = $("bnLabel").value.trim();
       if (!label) return toast("Give the bin a name");
@@ -2620,6 +2625,8 @@ window.openNativeAudit = async () => {
           <label class="cd" id="brs_${esc(bn.bin_code)}" style="display:none;flex:none;align-items:center;gap:4px">
             <input type="checkbox" data-brs="${esc(bn.bin_code)}"> re-sealed after counting</label>
         </div>`).join("")}` : ""}
+      <div class="cd" style="margin:${sealedBins.length ? "4px" : "10px"} 0 6px">&#128274; Found a physical
+        bin to seal, or need to change one? <a href="#" id="audBins" style="color:var(--deployed);font-weight:600">Manage bins</a></div>
       <div style="display:flex;gap:8px;font-size:11px;color:var(--text-muted);padding:4px 0;text-transform:uppercase;letter-spacing:.05em">
         <div style="flex:1">Contents</div><div style="width:52px;text-align:right">Expect</div><div style="width:72px;text-align:center">Actual</div></div>
       ${rowsHtml}
@@ -2739,6 +2746,22 @@ window.openNativeAudit = async () => {
       });
       stat(); syncRows(); phSync();
     });
+    // mid-walk bin management (create/assign/seal the bin just packed). Leaving
+    // the walk discards typed entries — arm-then-confirm instead of confirm()
+    // (blocked in embed iframes) when anything is in progress.
+    let audBinsArmed = false;
+    $("audBins").onclick = ev => {
+      ev.preventDefault();
+      const dirty = stat().nd > 0 || addedItems().length
+                 || Object.keys(phFiles).length || Object.keys(binAnswers).length;
+      if (dirty && !audBinsArmed){
+        audBinsArmed = true;
+        toast("Tap again to open Manage bins — current audit entries will be lost");
+        setTimeout(() => { audBinsArmed = false; }, 4000);
+        return;
+      }
+      openBinManager("audit");
+    };
     $("audAddBtn").onclick = () => {
       const n = $("audAdds").children.length;
       const row = document.createElement("div");
