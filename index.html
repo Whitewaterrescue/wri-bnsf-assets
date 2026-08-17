@@ -167,6 +167,14 @@
   .audrow .aq{width:72px;padding:8px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;text-align:center;flex:none}
   .audrow.dev .aq{border-color:var(--warn)}
   .audrow.crit .aq{border-color:var(--bad)}
+  /* sealed bins: members hide behind the seal question; a broken seal expands them */
+  .audrow.binhid{display:none}
+  .binrow{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px dashed var(--border);flex-wrap:wrap;font-size:13.5px}
+  .binrow .btn{flex:none;padding:8px 12px;font-size:12.5px}
+  .binans.pick[data-ans="intact"]{outline:2px solid var(--ok);color:var(--ok)}
+  .binans.pick[data-ans="broken"]{outline:2px solid var(--bad);color:var(--bad)}
+  .binph{font-size:12px;color:var(--text-dim);padding:6px 0;border-bottom:1px dashed var(--border)}
+  #fltExtent.on{border:1px solid var(--accent);color:var(--accent)}
   .audrow .aextra{display:none;width:100%;gap:6px}
   .audrow .aextra select,.audrow .aextra input{padding:7px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12.5px}
   .audrow .aextra input{flex:1}
@@ -291,8 +299,9 @@
 require([
   "esri/identity/OAuthInfo","esri/identity/IdentityManager",
   "esri/Map","esri/views/MapView","esri/layers/GraphicsLayer","esri/Graphic",
-  "esri/geometry/Point","esri/layers/FeatureLayer","esri/widgets/Locate"
-], function(OAuthInfo, esriId, Map, MapView, GraphicsLayer, Graphic, Point, FeatureLayer, Locate){
+  "esri/geometry/Point","esri/layers/FeatureLayer","esri/widgets/Locate",
+  "esri/core/reactiveUtils","esri/geometry/support/webMercatorUtils"
+], function(OAuthInfo, esriId, Map, MapView, GraphicsLayer, Graphic, Point, FeatureLayer, Locate, reactiveUtils, webMercatorUtils){
 
 const SVC = "https://services6.arcgis.com/Ji79lWGR5B33LhY7/arcgis/rest/services/WRI_BNSF_Asset_Readiness/FeatureServer";
 const PORTAL = "https://www.arcgis.com";
@@ -359,6 +368,7 @@ const catLabel = c => String(c||"Other items").split("(")[0].trim() || "Other it
 esriId.registerOAuthInfos([new OAuthInfo({appId:"4Fi59bD09H8vlidE", portalUrl:PORTAL, popup:false})]);
 
 let assets = [], byId = {}, byGuid = {}, selected = null, view, gLayer, nearMode = false, nearPt = null;
+let extentFilter = false;   // "Map area" chip: scope the asset list to the current map extent
 let tripMode = false; const tripSel = new Set();   // insertion order = visit order
 let activeTrip = [];   // built trip: the UI scopes to these ids until cleared (persists)
 const layers = {
@@ -373,6 +383,7 @@ const layers = {
   baseline: new FeatureLayer({url: SVC + "/1"}),
   counts: new FeatureLayer({url: SVC + "/3"}),
   trips: new FeatureLayer({url: SVC + "/12"}),   // per-user active trip
+  bins:  new FeatureLayer({url: SVC + "/13"}),   // sealed inventory bins
 };
 
 async function qAll(lyr, outFields, geom){
@@ -459,6 +470,11 @@ async function boot(force){
   });
   // "my location" dot + pan-to (needs the browser location permission)
   view.ui.add(new Locate({view}), "top-left");
+  // "Map area" chip: re-scope the list when panning settles. stationary fires
+  // once per settle, so select()'s goTo can't re-enter in a loop.
+  reactiveUtils.watch(() => view.stationary, s => {
+    if (s && extentFilter) renderList(currentListItems());
+  });
   drawMarkers(assets);
   view.on("click", async ev => {
     if (nearMode){ nearPt = ev.mapPoint; nearMode=false; $("nearHint").textContent="Location set — ranking…"; runNearest(); return; }
@@ -546,6 +562,18 @@ function buildFilters(){
     };
     host.appendChild(sel);
   });
+  const ext = document.createElement("button");
+  ext.className = "btn gray";
+  ext.id = "fltExtent";
+  ext.style.cssText = "padding:6px 10px;font-size:11.5px;flex:none";
+  ext.textContent = "Map area";
+  ext.title = "Show only assets inside the current map view";
+  ext.onclick = () => {
+    extentFilter = !extentFilter;
+    ext.classList.toggle("on", extentFilter);
+    renderList(currentListItems());
+  };
+  host.appendChild(ext);
   const exp = document.createElement("button");
   exp.className = "btn gray";
   exp.style.cssText = "padding:6px 10px;font-size:11.5px;flex:none";
@@ -695,6 +723,16 @@ function currentListItems(){
   if (listFilter){
     const q = listFilter.toLowerCase();
     items = items.filter(x => x.cap.includes(q) || (x.attrs.current_warehouse||"").toLowerCase().includes(q));
+  }
+  if (extentFilter && view && view.extent){
+    // asset geometry is geographic; the view extent is Web Mercator — compare
+    // in lat/lon (same convention as directions/nearest). No-geometry assets
+    // are excluded while the chip is on.
+    const e = view.extent.spatialReference && view.extent.spatialReference.isWGS84
+      ? view.extent : webMercatorUtils.webMercatorToGeographic(view.extent);
+    items = items.filter(x => x.geom &&
+      x.geom.longitude >= e.xmin && x.geom.longitude <= e.xmax &&
+      x.geom.latitude  >= e.ymin && x.geom.latitude  <= e.ymax);
   }
   return items;
 }
@@ -891,14 +929,19 @@ async function showInventory(){
   openOverlay("Inventory — " + a.equipment_id,
               {html:"<div style='color:var(--text-dim)'>Loading…</div>"});
   try {
-    const [baseFs, inspFs] = await Promise.all([
+    const [baseFs, inspFs, binFs] = await Promise.all([
       layers.baseline.queryFeatures({where:`asset_guid='{${guid}}'`,
-        outFields:["item_category","item_desc","item_code","expected_qty","modified_date"],
+        outFields:["item_category","item_desc","item_code","expected_qty","modified_date","bin_code"],
         orderByFields:["OBJECTID"], num:2000}),  // workbook order = survey order
       layers.insp.queryFeatures({where:`asset_guid='{${guid}}' AND insp_type='audit_inventory'`,
         outFields:["GlobalID","insp_date","inspector_name"],
         orderByFields:["insp_date DESC"], num:1}),
+      layers.bins.queryFeatures({where:`asset_guid='{${guid}}'`,
+        outFields:["bin_code","bin_label","seal_status"], num:200})
+        .catch(() => ({features:[]})),   // bins table may not exist yet
     ]);
+    const binsByCode = {};
+    binFs.features.forEach(f => binsByCode[f.attributes.bin_code] = f.attributes);
     const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;");
     const adj = {};
     let lastCount = null;
@@ -935,7 +978,8 @@ async function showInventory(){
       rows += `<div class="invrow${short||condBad ? " bad" : ""}">
         <div>${esc(b.item_desc)}
           ${condBad ? `<div class="invn">${title(c.item_condition)}${c.replace_needed==="yes"?" · needs replacement":""}</div>` : ""}
-          ${c && c.count_notes ? `<div class="invn">${esc(c.count_notes)}</div>` : ""}</div>
+          ${c && c.count_notes ? `<div class="invn">${esc(c.count_notes)}</div>` : ""}
+          ${b.bin_code && binsByCode[b.bin_code] ? `<div class="invn" style="color:var(--text-muted)">${binsByCode[b.bin_code].seal_status === "sealed" ? "&#128274; " : ""}bin: ${esc(binsByCode[b.bin_code].bin_label || b.bin_code)}</div>` : ""}</div>
         <div class="invq">${(c && c.counted_qty != null ? c.counted_qty : b.expected_qty) ?? "—"}${short ? ` <span class="invx">of ${b.expected_qty}</span>` : ""}</div>
       </div>`;
     });
@@ -944,17 +988,20 @@ async function showInventory(){
       ${lastCount ? ` · adjusted by count ${fmtDate(lastCount.insp_date)}${lastCount.inspector_name?" ("+esc(lastCount.inspector_name)+")":""}` : " · baseline only — no counts recorded yet"}
       ${flagged ? ` · <b style="color:var(--warn)">${flagged} flagged</b>` : ""}
       · <a href="#" id="invCsv" style="color:var(--deployed);font-weight:600">Download CSV</a>
+      · <a href="#" id="invBins" style="color:var(--deployed);font-weight:600">Manage bins</a>
       ${window.isAdmin && window.viewMode === "admin" ? ` · <a href="#" id="invAdm" style="color:var(--accent);font-weight:600">Admin: edit items</a>` : ""}</div>`;
     $("oBody").innerHTML = baseFs.features.length ? hdr + rows
       : "No baseline inventory on file — run an Audit Inventory count to establish one.";
     const admLink = $("invAdm");
     if (admLink) admLink.onclick = ev => { ev.preventDefault(); openAdminBaseline(); };
+    const binsLink = $("invBins");
+    if (binsLink) binsLink.onclick = ev => { ev.preventDefault(); openBinManager(); };
     const csvLink = $("invCsv");
     if (csvLink) csvLink.onclick = ev => {   // data already on screen — no re-query
       ev.preventDefault();
       const out = [CSV_HEADER];
       baseFs.features.forEach(f => { const b = f.attributes;
-        out.push(csvRow(a, b, effAdj(b), lastCount));
+        out.push(csvRow(a, b, effAdj(b), lastCount, binsByCode));
       });
       downloadCSV(`inventory_${a.equipment_id}_${today()}.csv`, out);
     };
@@ -1177,6 +1224,166 @@ window.openAdminBaseline = async () => {
   } catch(e){ console.error(e); $("oBody").innerHTML = "Failed to load: " + (e.message||e); }
 };
 
+// ================= sealed bins (any signed-in inspector) =================
+// A bin groups baseline items physically sealed together in the trailer.
+// Audits verify the seal once instead of counting members (bin-seal sentinel
+// rows in inventory_counts — see openNativeAudit). Membership lives on
+// inventory_baseline.bin_code; identity + seal state on the inventory_bins
+// table (/13). Called plain from the inventory overlay (swaps in place, like
+// openAdminBaseline) or with stack=true from the audit guide (depth-2 child).
+window.openBinManager = async (stack) => {
+  const x = byId[selected]; if (!x) return;
+  const a = x.attrs;
+  const guid = String(a.GlobalID).replace(/[{}]/g,"");
+  openOverlay("Bins — " + a.equipment_id,
+    Object.assign({html:"<div style='color:var(--text-dim)'>Loading bins…</div>"},
+                  stack ? {stack:true} : {}));
+  let bins = [], rows = [];
+  const load = async () => {
+    const [binFs, baseFs] = await Promise.all([
+      layers.bins.queryFeatures({where:`asset_guid='{${guid}}'`,
+        outFields:["OBJECTID","bin_code","bin_label","bin_location","seal_status","sealed_by","sealed_date"],
+        orderByFields:["OBJECTID"], num:200}),
+      layers.baseline.queryFeatures({where:`asset_guid='{${guid}}'`,
+        outFields:["OBJECTID","item_code","item_desc","item_category","expected_qty","critical_item","bin_code"],
+        orderByFields:["OBJECTID"], num:2000}),
+    ]);
+    bins = binFs.features.map(f => f.attributes);
+    rows = baseFs.features.map(f => f.attributes);
+  };
+  const members = code => rows.filter(r => r.bin_code === code);
+
+  const renderMain = () => {
+    $("oTitle").textContent = "Bins — " + a.equipment_id;
+    $("oBody").innerHTML = `
+      <div class="cd" style="margin-bottom:8px">A bin groups inventory items that are physically
+      sealed together in the trailer. During an audit, an intact seal counts every item in the
+      bin as present — no individual counting. A broken seal expands the bin back to
+      item-by-item counting, after which it can be re-sealed.</div>
+      ${bins.length ? bins.map((bn, i) => `
+        <div class="binrow">
+          <div style="flex:1;min-width:170px">${bn.seal_status === "sealed" ? "&#128274;" : "&#128275;"}
+            <b>${esc(bn.bin_label || bn.bin_code)}</b>
+            <span class="asub">${esc(bn.bin_code)} · ${members(bn.bin_code).length} items ·
+              ${bn.seal_status === "sealed"
+                ? `sealed ${fmtDate(bn.sealed_date)}${bn.sealed_by ? " by " + esc(bn.sealed_by) : ""}`
+                : "open (not sealed)"}${bn.bin_location ? " · " + esc(bn.bin_location) : ""}</span></div>
+          <button class="btn gray" data-bassign="${i}">Items</button>
+          <button class="btn ${bn.seal_status === "sealed" ? "gray" : "red"}" data-bseal="${i}">
+            ${bn.seal_status === "sealed" ? "Unseal" : "Seal"}</button>
+          <button class="btn gray" data-bdel2="${i}" title="Delete bin">✕</button>
+        </div>`).join("") : `<div class="cd" style="padding:6px 0">No bins yet.</div>`}
+      <div class="invcat">New bin</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <input id="bnLabel" type="text" class="nfin" placeholder="Bin name (e.g. Red tote — front shelf)" style="flex:2;min-width:170px;margin:0">
+        <input id="bnLoc" type="text" class="nfin" placeholder="Where in the trailer (optional)" style="flex:1.5;min-width:130px;margin:0">
+        <button class="btn red" id="bnCreate" style="flex:none;padding:8px 14px">Create bin</button>
+      </div>
+      <div class="cd" style="margin-top:6px">Create the bin, add its items, physically seal it in
+      the trailer, then tap Seal here — the next audit will verify the seal.</div>`;
+    $("bnCreate").onclick = async () => {
+      const label = $("bnLabel").value.trim();
+      if (!label) return toast("Give the bin a name");
+      $("bnCreate").disabled = true;
+      try {
+        // number within today's stamp from the FRESH bins list (query, don't guess)
+        const stamp = new Date().toISOString().slice(2,10).replace(/-/g,"");
+        const n = bins.filter(b => String(b.bin_code||"").startsWith(`BIN-${stamp}-`)).length + 1;
+        await addRow(layers.bins, {asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
+          bin_code: `BIN-${stamp}-${n}`, bin_label: label.slice(0,64),
+          bin_location: $("bnLoc").value.trim().slice(0,255) || null,
+          seal_status: "open", app_version: "bin-mgr-v1", source_device: "browser"});
+        toast("Bin created — now add its items");
+        await load(); renderMain();
+      } catch(e){ console.error(e); toast("Create failed: " + (e.message||e)); $("bnCreate").disabled = false; }
+    };
+    $("oBody").querySelectorAll("[data-bassign]").forEach(btn =>
+      btn.onclick = () => renderAssign(bins[+btn.dataset.bassign]));
+    $("oBody").querySelectorAll("[data-bseal]").forEach(btn => btn.onclick = async () => {
+      const bn = bins[+btn.dataset.bseal];
+      const sealing = bn.seal_status !== "sealed";
+      if (sealing && !members(bn.bin_code).length) return toast("Add items to the bin before sealing it");
+      btn.disabled = true;
+      try {
+        const attrs = sealing
+          ? {OBJECTID: bn.OBJECTID, seal_status: "sealed",
+             sealed_by: String(window.__userName||"").slice(0,64), sealed_date: Date.now()}
+          : {OBJECTID: bn.OBJECTID, seal_status: "open"};
+        const r = await layers.bins.applyEdits({updateFeatures:[{attributes: attrs}]});
+        const r0 = (r.updateFeatureResults||[])[0];
+        if (!r0 || r0.error) throw new Error(r0 && r0.error ? r0.error.message : "update failed");
+        toast(sealing ? "Bin sealed — the next audit will verify the seal" : "Bin marked open");
+        await load(); renderMain();
+      } catch(e){ console.error(e); toast("Failed: " + (e.message||e)); btn.disabled = false; }
+    });
+    $("oBody").querySelectorAll("[data-bdel2]").forEach(btn => btn.onclick = async () => {
+      const bn = bins[+btn.dataset.bdel2];
+      const mem = members(bn.bin_code);
+      btn.disabled = true;
+      try {
+        if (mem.length){   // release members FIRST so a failure can't orphan them
+          const r = await layers.baseline.applyEdits({updateFeatures:
+            mem.map(m => ({attributes:{OBJECTID: m.OBJECTID, bin_code: null}}))});
+          if ((r.updateFeatureResults||[]).some(q => q.error))
+            throw new Error("failed to release the bin's items");
+        }
+        await layers.bins.applyEdits({deleteFeatures:[{objectId: bn.OBJECTID}]});
+        toast("Bin deleted — its items go back to individual counting");
+        await load(); renderMain();
+      } catch(e){ console.error(e); toast("Delete failed: " + (e.message||e)); btn.disabled = false; }
+    });
+  };
+
+  const renderAssign = bn => {
+    $("oTitle").textContent = `Bin items — ${bn.bin_label || bn.bin_code}`;
+    const sel = new Set(members(bn.bin_code).map(m => m.OBJECTID));
+    $("oBody").innerHTML = `
+      <div class="cd" style="margin-bottom:6px">Tick the items physically packed in this bin.
+      Items already in another bin are shown disabled. &#9888; = critical item (allowed in a
+      bin — the seal is the attestation).</div>
+      <input id="baSearch" type="text" class="nfin" placeholder="Search items…" style="width:100%">
+      ${rows.map(r => {
+        const other = r.bin_code && r.bin_code !== bn.bin_code;
+        return `<label class="binitem" data-search="${esc((r.item_desc + " " + (r.item_code||"")).toLowerCase())}"
+          style="display:flex;gap:8px;align-items:center;padding:7px 0;border-bottom:1px dashed var(--border);font-size:13.5px;${other ? "opacity:.45" : "cursor:pointer"}">
+          <input type="checkbox" data-boid="${r.OBJECTID}" ${sel.has(r.OBJECTID) ? "checked" : ""} ${other ? "disabled" : ""}>
+          <span style="flex:1">${esc(r.item_desc)}${r.critical_item === "yes" ? ' <span style="color:var(--warn)">&#9888;</span>' : ""}
+            <span class="asub">${esc(r.item_code||"")}${other ? " · in " + esc(r.bin_code) : ""}</span></span>
+          <span class="cd" style="flex:none">${r.expected_qty ?? ""}</span>
+        </label>`;
+      }).join("")}
+      <button class="btn red" id="baSave" style="width:100%;margin:12px 0 6px">Save bin items</button>
+      <button class="btn gray" id="baBack" style="width:100%;margin-bottom:14px">&#8592; Back to bins</button>`;
+    $("baSearch").oninput = e => { const q = e.target.value.trim().toLowerCase();
+      $("oBody").querySelectorAll(".binitem").forEach(l =>
+        l.style.display = !q || l.dataset.search.includes(q) ? "flex" : "none"); };
+    $("baBack").onclick = () => renderMain();
+    $("baSave").onclick = async () => {
+      $("baSave").disabled = true;
+      try {
+        const upds = [];
+        $("oBody").querySelectorAll("[data-boid]").forEach(cb => {
+          if (cb.disabled) return;
+          const oid = +cb.dataset.boid;
+          const r = rows.find(t => t.OBJECTID === oid);
+          const want = cb.checked ? bn.bin_code : null;
+          if ((r.bin_code || null) !== want) upds.push({attributes:{OBJECTID: oid, bin_code: want}});
+        });
+        if (!upds.length){ toast("No changes"); $("baSave").disabled = false; return; }
+        const r = await layers.baseline.applyEdits({updateFeatures: upds});
+        if ((r.updateFeatureResults||[]).some(q => q.error)) throw new Error("some items failed to save");
+        toast(`Saved — ${upds.length} item(s) updated`);
+        await load(); renderMain();
+      } catch(e){ console.error(e); toast("Save failed: " + (e.message||e)); $("baSave").disabled = false; }
+    };
+  };
+
+  try { await load(); renderMain(); }
+  catch(e){ console.error(e);
+    $("oBody").innerHTML = "Bins unavailable: " + (e.message||e)
+      + "<div class='cd' style='margin-top:6px'>If this persists, the inventory_bins schema may not be added yet (schema/add_inventory_bins.py).</div>"; }
+};
+
 // ---- CSV inventory export (per-asset above; fleet dialog honors the filters) ----
 const today = () => new Date().toISOString().slice(0,10);
 const csvCell = v => { v = v == null ? "" : String(v);
@@ -1189,16 +1396,18 @@ function downloadCSV(name, rows){
   setTimeout(() => { URL.revokeObjectURL(url); el.remove(); }, 4000);
 }
 const CSV_HEADER = ["Asset ID","Warehouse","Region","Category","Item Code","Item","Unit",
-  "Expected","Counted","Shortage","Critical","Replace-At","Condition","Notes",
-  "Last Count","Inspector"];
-function csvRow(a, b, c, lastCount){
+  "Expected","Counted","Shortage","Critical","Replace-At","Bin","Bin Status",
+  "Condition","Notes","Last Count","Inspector"];
+function csvRow(a, b, c, lastCount, bins){
   const counted = c && c.counted_qty != null ? c.counted_qty
     : (lastCount ? b.expected_qty : null);   // audited + untouched = present at expected
+  const bn = bins && b.bin_code ? bins[b.bin_code] : null;   // bin_code is per-asset — pass that asset's map
   return [a.equipment_id, a.current_warehouse || a.staging_desc || "",
     REGION_LABEL[a.hazmat_manager] || a.hazmat_manager || "",
     catLabel(b.item_category), b.item_code || "", b.item_desc || "", b.item_unit || "",
     b.expected_qty, counted, counted != null ? (b.expected_qty || 0) - counted : "",
     b.critical_item === "yes" ? "yes" : "", b.replace_qty ?? "",
+    bn ? (bn.bin_label || b.bin_code) : "", bn ? (bn.seal_status || "") : "",
     c ? (c.item_condition || "") : "", c ? (c.count_notes || "") : "",
     lastCount ? fmtDate(lastCount.insp_date) : "",
     lastCount ? (lastCount.inspector_name || "") : ""];
@@ -1238,8 +1447,16 @@ window.openExportCSV = () => {
         base = base.concat(await qPage(layers.baseline,
           `asset_equipment_id IN (${ch.join(",")})`,
           ["asset_equipment_id","item_code","item_desc","item_category","expected_qty",
-           "item_unit","critical_item","replace_qty","modified_date"], ["asset_equipment_id","OBJECTID"]));
+           "item_unit","critical_item","replace_qty","modified_date","bin_code"], ["asset_equipment_id","OBJECTID"]));
         stat(`Loading baselines… ${base.length} items`);
+      }
+      // bins per asset (bin_code is only unique per asset — key by asset first)
+      const binsByAid = {};
+      for (const ch of inChunks(ids, 30)){
+        (await qPage(layers.bins, `asset_equipment_id IN (${ch.join(",")})`,
+          ["asset_equipment_id","bin_code","bin_label","seal_status"], null)
+          .catch(() => []))   // bins table may not exist yet
+          .forEach(bn => ((binsByAid[bn.asset_equipment_id] = binsByAid[bn.asset_equipment_id] || {})[bn.bin_code] = bn));
       }
       if (!base.length){ stat("No baseline inventory in scope."); $("expGo").disabled = false; return; }
       // latest whitelisted audit per asset
@@ -1279,7 +1496,7 @@ window.openExportCSV = () => {
           const badCond = c && c.item_condition && c.item_condition !== "good";
           if (!short && !badCond) return;
         }
-        rows.push(csvRow(x.attrs, b, c, lc));
+        rows.push(csvRow(x.attrs, b, c, lc, binsByAid[b.asset_equipment_id]));
       });
       stat(`Ready — ${rows.length - 1} rows.`);
       downloadCSV(`bnsf-inventory_${today()}.csv`, rows);
@@ -1359,17 +1576,23 @@ function prepClockTable(x){
 const prepIssueList = issFs => issFs.features.map(f => { const i=f.attributes;
   return `<li><b>[${i.issue_severity}]</b> ${esc(i.issue_desc)}${i.parts_needed?" — <b>bring:</b> "+esc(i.parts_needed):""}</li>`;
 }).join("") || "<li>No open issues on record.</li>";
-function prepInvSection(baseFs){
+function prepInvSection(baseFs, bins){
+  bins = bins || {};
   let invRows = "", lastCat = null;
   baseFs.features.forEach(f => { const b=f.attributes;
     const cat = catLabel(b.item_category);
     if (cat !== lastCat){ invRows += `<tr class="sec"><td colspan="5">${esc(cat)}</td></tr>`; lastCat=cat; }
-    invRows += `<tr><td>${esc(b.item_desc)}</td><td>${esc(b.item_code)}</td><td style="text-align:center">${b.expected_qty??""}</td><td class="w"></td><td class="w"></td></tr>`;
+    const bn = b.bin_code && bins[b.bin_code];
+    invRows += `<tr><td>${esc(b.item_desc)}</td><td>${esc(b.item_code)}${bn ? `<br><small>${bn.seal_status === "sealed" ? "&#128274; " : ""}bin: ${esc(bn.bin_label || b.bin_code)}</small>` : ""}</td><td style="text-align:center">${b.expected_qty??""}</td><td class="w"></td><td class="w"></td></tr>`;
   });
+  const sealed = Object.values(bins).filter(bn => bn.seal_status === "sealed").length;
   return baseFs.features.length
     ? `<h2>Expected inventory (${baseFs.features.length} line items — count against this)</h2>
        <p class="note">Groups and order match the Audit Inventory survey. Record counts in the
        Audit Inventory survey; this sheet is the offline fallback.</p>
+       ${sealed ? `<p class="note"><b>&#128274; ${sealed} sealed bin(s) aboard</b> — if a bin's seal
+       is intact, verify the seal instead of counting its items; count item-by-item only if the
+       seal is broken or missing, then re-seal.</p>` : ""}
        <table><tr><th>Item</th><th>Item #</th><th>Expected</th><th>Counted</th><th>Replace</th></tr>${invRows}</table>`
     : `<h2>Expected inventory</h2><p class="note">No baseline on file for this asset yet — record what you find in the Audit Inventory survey to establish one.</p>`;
 }
@@ -1387,21 +1610,26 @@ const prepInstructions = () => `
   https://whitewaterrescue.github.io/wri-bnsf-assets/instructions.html</p>`;
 async function prepFetch(x){
   const guid = String(x.attrs.GlobalID).replace(/[{}]/g,"");
-  const [issFs, baseFs] = await Promise.all([
+  const [issFs, baseFs, binFs] = await Promise.all([
     layers.issues.queryFeatures({where:`asset_guid='{${guid}}' AND issue_status IN ('open','in_progress')`,
       outFields:["issue_severity","issue_desc","parts_needed"], num:200}),
     layers.baseline.queryFeatures({where:`asset_guid='{${guid}}'`,
-      outFields:["item_category","item_desc","item_code","expected_qty"],
+      outFields:["item_category","item_desc","item_code","expected_qty","bin_code"],
       orderByFields:["OBJECTID"], num:2000}),  // workbook order = survey order
+    layers.bins.queryFeatures({where:`asset_guid='{${guid}}'`,
+      outFields:["bin_code","bin_label","seal_status"], num:200})
+      .catch(() => ({features:[]})),   // bins table may not exist yet
   ]);
-  return {issFs, baseFs};
+  const bins = {};
+  binFs.features.forEach(f => bins[f.attributes.bin_code] = f.attributes);
+  return {issFs, baseFs, bins};
 }
 $("btnPrep").onclick = async () => {
   const x = byId[selected]; if (!x) return;
   const a = x.attrs;
   $("btnPrep").textContent = "Building prep sheet…";
   try {
-    const {issFs, baseFs} = await prepFetch(x);
+    const {issFs, baseFs, bins} = await prepFetch(x);
     const w = window.open("", "_blank");
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Prep — ${esc(a.equipment_id)}</title>
       <style>${PREP_CSS}</style></head><body>
@@ -1412,7 +1640,7 @@ $("btnPrep").onclick = async () => {
       <h2>Clocks this visit can close</h2>
       ${prepClockTable(x)}
       ${prepInstructions()}
-      ${prepInvSection(baseFs)}
+      ${prepInvSection(baseFs, bins)}
       </body></html>`);
     w.document.close();
   } catch(e){ console.error(e); toast("Prep sheet failed: " + (e.message||e)); }
@@ -1526,7 +1754,7 @@ async function buildTripSheet(eids){
         ${prepIdentity(a)}
         <div class="bring"><h2>&#9888; Bring list — open issues</h2><ul>${prepIssueList(d.issFs)}</ul></div>
         <h2>Clocks this visit can close</h2>${prepClockTable(d.x)}
-        ${prepInvSection(d.baseFs)}`;
+        ${prepInvSection(d.baseFs, d.bins)}`;
     }).join("");
     const w = window.open("", "_blank");
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Trip — ${data.length} assets</title>
@@ -1604,7 +1832,7 @@ async function renderGuide(x){
   try { await processAssetAudit(x); } catch(e){ console.warn("live processing skipped:", e); }
   const t0 = new Date(); t0.setHours(0,0,0,0);
   const eqG = x.equip.map(e => "'{"+String(e.GlobalID).replace(/[{}]/g,"")+"}'");
-  const [audFs, issFs, mFs] = await Promise.all([
+  const [audFs, issFs, mFs, binFs] = await Promise.all([
     layers.insp.queryFeatures({where:`asset_guid='{${aguid}}' AND insp_type IN ('audit_inventory','asset_detail_check')`
         + ` AND (insp_type <> 'audit_inventory' OR app_version IN ${AUDIT_APPS})`,
       outFields:["GlobalID","insp_date","insp_result","inspector_name","insp_type"],
@@ -1614,6 +1842,8 @@ async function renderGuide(x){
     eqG.length ? layers.maint.queryFeatures({where:`equip_guid IN (${eqG.join(",")})`,
       outFields:["equip_guid","event_date"], orderByFields:["event_date DESC"], num:100})
       : Promise.resolve({features:[]}),
+    layers.bins.queryFeatures({where:`asset_guid='{${aguid}}' AND seal_status='sealed'`,
+      outFields:["bin_code"], num:200}).catch(() => ({features:[]})),
   ]);
   const doneToday = new Set(mFs.features.filter(f => (f.attributes.event_date||0) >= +t0)
                                         .map(f => g8s(f.attributes.equip_guid)));
@@ -1657,6 +1887,11 @@ async function renderGuide(x){
   html += `<div class="cd" style="margin:2px 0 8px">Poor signal at the trailer?
     <a href="#" onclick="openSurvey('${s123kind}');return false" style="color:var(--deployed)">Use the Survey123 form instead</a>
     — it can also be downloaded to the Survey123 field app for fully offline use.</div>`;
+  const nBins = binFs.features.length;
+  html += `<div class="cd" style="margin:2px 0 8px">Sealed bins: ${nBins || "none"} —
+    <a href="#" onclick="openBinManager(true);return false" style="color:var(--deployed)">Manage bins</a>
+    · ${nBins ? "the walk verifies each seal instead of counting its contents"
+              : "seal items into a bin so future audits verify one seal instead of counting"}</div>`;
   html += cat(`Deficiencies (${issuesList.length} open)`);
   if (!issuesList.length){
     html += `<div class="cd" style="padding:4px 0">${latest
@@ -2292,16 +2527,33 @@ window.openNativeAudit = async () => {
               {html:"<div style='color:var(--text-dim)'>Loading item list…</div>", stack:true});
   try {
     const guid = String(a.GlobalID).replace(/[{}]/g,"");
-    const fs = await layers.baseline.queryFeatures({where:`asset_guid='{${guid}}'`,
-      outFields:["item_code","item_desc","item_category","expected_qty","item_unit",
-                 "critical_item","replace_qty","baseline_notes"],
-      orderByFields:["OBJECTID"], num:2000});
+    const [fs, binFs] = await Promise.all([
+      layers.baseline.queryFeatures({where:`asset_guid='{${guid}}'`,
+        outFields:["item_code","item_desc","item_category","expected_qty","item_unit",
+                   "critical_item","replace_qty","baseline_notes","bin_code"],
+        orderByFields:["OBJECTID"], num:2000}),
+      layers.bins.queryFeatures({where:`asset_guid='{${guid}}' AND seal_status='sealed'`,
+        outFields:["OBJECTID","bin_code","bin_label","bin_location","sealed_by","sealed_date"],
+        num:200}).catch(() => ({features:[]})),   // bins table may not exist yet
+    ]);
     const items = fs.features.map(f => f.attributes);
     if (!items.length){ $("oBody").innerHTML = "No baseline inventory on file for this asset."; return; }
+    // sealed bins: one seal question stands in for counting every member item
+    const binMembers = {};   // bin_code -> [item index]
+    items.forEach((b, i) => { if (b.bin_code)
+      (binMembers[b.bin_code] = binMembers[b.bin_code] || []).push(i); });
+    const sealedBins = binFs.features.map(f => f.attributes)
+      .filter(bn => (binMembers[bn.bin_code] || []).length);   // empty sealed bins ask nothing
+    const binLabelOf = {};
+    sealedBins.forEach(bn => binLabelOf[bn.bin_code] = bn.bin_label || bn.bin_code);
+    const binOf = i => { const c = items[i].bin_code;
+      return c && binLabelOf[c] !== undefined ? c : null; };
+    const binAnswers = {};   // bin_code -> 'intact' | 'broken' (explicit, no default)
     // collapsible walk-zone sections (client 2026-07-23) — headers toggle;
     // sections start OPEN so nothing is silently skipped (untouched = present)
     let lastCat = null, sec = -1;
     const secCounts = [];
+    const phDone = new Set();   // one "items in sealed bin" line per (section, bin)
     const rowsHtml = items.map((b, i) => {
       const exp = b.expected_qty ?? 1;
       const cat = catLabel(b.item_category);
@@ -2314,9 +2566,17 @@ window.openNativeAudit = async () => {
           <span class="secdev" id="secdev${sec}" style="color:var(--warn)"></span></div>`;
         lastCat = cat;
       }
+      const bc = binOf(i);
+      let ph = "";
+      if (bc && !phDone.has(sec + "|" + bc)){
+        phDone.add(sec + "|" + bc);
+        const nHere = binMembers[bc].filter(j => catLabel(items[j].item_category) === cat).length;
+        ph = `<div class="binph" data-bin="${esc(bc)}" data-sec="${sec}">&#128274;
+          ${nHere} item(s) in sealed bin <b>${esc(binLabelOf[bc])}</b> — verify the seal at the top</div>`;
+      }
       const unit = (b.item_unit && b.item_unit !== "each") ? " " + esc(b.item_unit) : "";
       const loc = b.baseline_notes ? ` · ${esc(b.baseline_notes)}` : "";
-      return `${hdr}<div class="audrow" data-sec="${sec}" data-search="${esc((b.item_desc + " " + (b.item_code||"") + " " + cat).toLowerCase())}">
+      return `${hdr}${ph}<div class="audrow${bc ? " binhid" : ""}" data-sec="${sec}" data-bin="${esc(bc||"")}" data-search="${esc((b.item_desc + " " + (b.item_code||"") + " " + cat).toLowerCase())}">
         <div class="adesc">${esc(b.item_desc)}${b.critical_item === "yes" ? ' <span style="color:var(--warn)">&#9888;</span>' : ""}
           <span class="asub">${esc(b.item_code||"")}${loc}</span></div>
         <div class="aexp">${exp}${unit}</div>
@@ -2347,6 +2607,19 @@ window.openNativeAudit = async () => {
         <input id="audSearch" type="text" placeholder="Search items…">
         <div id="audStat" class="cd">0 deviations</div>
       </div>
+      ${sealedBins.length ? `
+      <div class="invcat binhead">Sealed bins — verify each seal (required)</div>
+      ${sealedBins.map(bn => `
+        <div class="binrow" data-search="${esc((String(bn.bin_label||"") + " " + bn.bin_code + " "
+              + binMembers[bn.bin_code].map(j => items[j].item_desc).join(" ")).toLowerCase())}">
+          <div style="flex:1;min-width:170px">&#128274; <b>${esc(binLabelOf[bn.bin_code])}</b>
+            <span class="asub">${esc(bn.bin_code)} · ${binMembers[bn.bin_code].length} items ·
+              sealed ${fmtDate(bn.sealed_date)}${bn.sealed_by ? " by " + esc(bn.sealed_by) : ""}${bn.bin_location ? " · " + esc(bn.bin_location) : ""}</span></div>
+          <button class="btn gray binans" data-bin="${esc(bn.bin_code)}" data-ans="intact">Seal intact</button>
+          <button class="btn gray binans" data-bin="${esc(bn.bin_code)}" data-ans="broken">Broken / missing</button>
+          <label class="cd" id="brs_${esc(bn.bin_code)}" style="display:none;flex:none;align-items:center;gap:4px">
+            <input type="checkbox" data-brs="${esc(bn.bin_code)}"> re-sealed after counting</label>
+        </div>`).join("")}` : ""}
       <div style="display:flex;gap:8px;font-size:11px;color:var(--text-muted);padding:4px 0;text-transform:uppercase;letter-spacing:.05em">
         <div style="flex:1">Contents</div><div style="width:52px;text-align:right">Expect</div><div style="width:72px;text-align:center">Actual</div></div>
       ${rowsHtml}
@@ -2372,7 +2645,7 @@ window.openNativeAudit = async () => {
       </label>
       <button class="btn red" id="audSubmit" style="width:100%;margin:14px 0" disabled>Submit audit</button>
       <div class="cd" id="audHint" style="margin-bottom:14px">Every item starts at its expected quantity — change only what
-      differs. All 3 photos are required before you can submit.
+      differs. All 3 photos${sealedBins.length ? " and every sealed-bin answer" : ""} are required before you can submit.
       Entries are lost if you leave this page before submitting.</div>`;
     const critOf = i => items[i].critical_item === "yes";
     const threshOf = i => items[i].replace_qty ?? items[i].expected_qty ?? 1;
@@ -2385,7 +2658,9 @@ window.openNativeAudit = async () => {
         inp.closest(".audrow").classList.toggle("dev", dev);
         const isCrit = dev && critOf(i) && v < threshOf(i);
         inp.closest(".audrow").classList.toggle("crit", isCrit);
-        if (dev){ nd++; if (isCrit) nc++; }
+        // sealed-bin members reset to expected when re-hidden, so a binhid row
+        // can't be dev — the guard keeps the verdict honest regardless
+        if (dev && !inp.closest(".audrow").classList.contains("binhid")){ nd++; if (isCrit) nc++; }
       });
       $("audStat").innerHTML = `${nd} deviation${nd === 1 ? "" : "s"}${nc ? ` · <b style="color:var(--bad)">${nc} critical</b>` : ""}`;
       // per-section deviation tallies so a collapsed zone still shows its flags
@@ -2401,7 +2676,10 @@ window.openNativeAudit = async () => {
       const q = $("audSearch").value.trim().toLowerCase();
       $("oBody").querySelectorAll(".audrow").forEach(r => {
         const hit = !q || r.dataset.search.includes(q);
-        r.style.display = hit && (q || !collapsed.has(r.dataset.sec)) ? "" : "none";
+        // sealed-bin members stay hidden even under search — the bin row (whose
+        // search text includes its members) surfaces instead
+        r.style.display = hit && (q || !collapsed.has(r.dataset.sec))
+          && !r.classList.contains("binhid") ? "" : "none";
       });
       $("oBody").querySelectorAll(".audsec").forEach(h => {
         const s = h.dataset.sec;
@@ -2410,8 +2688,18 @@ window.openNativeAudit = async () => {
         h.style.display = any ? "" : "none";
         h.querySelector(".secarrow").innerHTML = (q || !collapsed.has(s)) ? "&#9662;" : "&#9656;";
       });
-      $("oBody").querySelectorAll(".invcat:not(.audsec)").forEach(h =>
+      $("oBody").querySelectorAll(".invcat:not(.audsec):not(.binhead)").forEach(h =>
         h.style.display = q ? "none" : "");
+      let anyBin = false;
+      $("oBody").querySelectorAll(".binrow").forEach(r => {
+        const show = !q || r.dataset.search.includes(q);
+        r.style.display = show ? "" : "none";
+        if (show) anyBin = true;
+      });
+      const bh = $("oBody").querySelector(".binhead");
+      if (bh) bh.style.display = anyBin ? "" : "none";
+      $("oBody").querySelectorAll(".binph").forEach(p =>
+        p.style.display = (q || binAnswers[p.dataset.bin] === "broken") ? "none" : "");
     };
     $("oBody").querySelectorAll(".audsec").forEach(h => h.onclick = () => {
       const s = h.dataset.sec;
@@ -2419,14 +2707,38 @@ window.openNativeAudit = async () => {
       syncRows();
     });
     const phReady = () => phSlots.every(([k]) => phFiles[k]);
+    const binsReady = () => sealedBins.every(bn => binAnswers[bn.bin_code]);
     const phSync = () => {
-      $("audSubmit").disabled = !phReady();
-      $("audHint").innerHTML = phReady()
-        ? "Entries are lost if you leave this page before submitting."
-        : "Every item starts at its expected quantity — change only what differs. "
-          + "<b>All 3 photos are required before you can submit.</b> "
-          + "Entries are lost if you leave this page before submitting.";
+      $("audSubmit").disabled = !(phReady() && binsReady());
+      const need = [];
+      if (!phReady()) need.push("all 3 photos");
+      if (!binsReady()) need.push("an answer for every sealed bin");
+      $("audHint").innerHTML = need.length
+        ? "Every item starts at its expected quantity — change only what differs. "
+          + `<b>Required before you can submit: ${need.join(" and ")}.</b> `
+          + "Entries are lost if you leave this page before submitting."
+        : "Entries are lost if you leave this page before submitting.";
     };
+    // seal question: explicit choice required; a broken seal expands the bin's
+    // members for normal counting, intact re-hides them at expected quantity
+    $("oBody").querySelectorAll(".binans").forEach(btn => btn.onclick = () => {
+      const code = btn.dataset.bin, ans = btn.dataset.ans;
+      binAnswers[code] = ans;
+      $("oBody").querySelectorAll(`.binans[data-bin="${code}"]`).forEach(b =>
+        b.classList.toggle("pick", b.dataset.ans === ans));
+      const brs = document.getElementById("brs_" + code);
+      if (brs) brs.style.display = ans === "broken" ? "flex" : "none";
+      $("oBody").querySelectorAll(`.audrow[data-bin="${code}"]`).forEach(r => {
+        if (ans === "broken") r.classList.remove("binhid");
+        else {
+          const inp = r.querySelector(".aq");
+          inp.value = items[+inp.dataset.i].expected_qty ?? 1;   // back to "present"
+          document.getElementById("an" + inp.dataset.i).value = "";
+          r.classList.add("binhid");
+        }
+      });
+      stat(); syncRows(); phSync();
+    });
     $("audAddBtn").onclick = () => {
       const n = $("audAdds").children.length;
       const row = document.createElement("div");
@@ -2472,24 +2784,31 @@ window.openNativeAudit = async () => {
       const who = $("audWho").value.trim();
       if (!who) return toast("Inspector name is required");
       if (!phReady()) return toast("All 3 photos are required");
+      if (!binsReady()) return toast("Answer the seal question for every sealed bin");
       const {nd, nc} = stat();
       $("audSubmit").disabled = true; $("audSubmit").textContent = "Submitting…";
       try {
         const newbies = addedItems();
         const result = nc > 0 ? "fail" : (nd > 0 ? "pass_with_issues" : "pass");
+        const resealedOf = code =>
+          !!$("oBody").querySelector(`[data-brs="${code}"]`) && $("oBody").querySelector(`[data-brs="${code}"]`).checked;
+        const noteBase = `Full audit: ${nd} deviation(s), ${nc} critical.`
+          + (newbies.length ? ` ${newbies.length} new item(s) added to inventory.` : "")
+          + (sealedBins.length ? ` ${sealedBins.length} sealed bin(s) verified.` : "");
         const res = await layers.insp.applyEdits({addFeatures:[{attributes:{
           asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
           insp_type: "audit_inventory", insp_status: "completed", insp_result: result,
           insp_date: Date.now(), inspector_name: who,
           inspector_affiliation: $("audAff").value.trim() || null,
-          insp_notes: `Full audit: ${nd} deviation(s), ${nc} critical.`
-            + (newbies.length ? ` ${newbies.length} new item(s) added to inventory.` : ""),
+          insp_notes: noteBase,
           app_version: "viewer-audit-v3", source_device: "browser"}}]});
         const ar = res.addFeatureResults[0];
         if (!ar || ar.error) throw new Error(ar && ar.error ? ar.error.message : "insert failed");
         const pguid = "{" + String(ar.globalId).replace(/[{}]/g, "") + "}";
         const kids = [];
         $("oBody").querySelectorAll(".aq").forEach(inp => {
+          // members of an intact bin are attested via the seal, not counted
+          if (inp.closest(".audrow").classList.contains("binhid")) return;
           const i = +inp.dataset.i, b = items[i], exp = b.expected_qty ?? 1, v = parseFloat(inp.value);
           if (isNaN(v) || v === exp) return;
           const isCrit = critOf(i) && v < threshOf(i);
@@ -2509,11 +2828,40 @@ window.openNativeAudit = async () => {
           item_desc: t.desc.slice(0,255), expected_qty: 0, counted_qty: t.qty,
           shortage_qty: 0, item_condition: t.cond, replace_needed: "no",
           count_notes: ("field-added" + (t.note ? " — " + t.note : "")).slice(0,500)}}));
+        // sealed-bin attestations: one audit-trail row per bin, engineered to
+        // never read as a deviation in either issue engine (counted==expected,
+        // condition good, note prefix bin-seal:) — see ops/audit_processor.py
+        sealedBins.forEach(bn => {
+          const ans = binAnswers[bn.bin_code]; if (!ans) return;
+          const n = binMembers[bn.bin_code].length;
+          kids.push({attributes:{parentglobalid: pguid, asset_equipment_id: a.equipment_id,
+            item_code: bn.bin_code,
+            item_desc: (ans === "intact"
+              ? `Sealed bin: ${binLabelOf[bn.bin_code]} — seal intact, ${n} item(s) attested present`
+              : `Sealed bin: ${binLabelOf[bn.bin_code]} — seal broken, ${n} item(s) counted individually`).slice(0,255),
+            expected_qty: 1, counted_qty: 1, shortage_qty: 0,
+            item_condition: "good", replace_needed: "no",
+            count_notes: ans === "intact" ? "bin-seal:intact"
+                       : (resealedOf(bn.bin_code) ? "bin-seal:broken;resealed" : "bin-seal:broken")}});
+        });
         if (kids.length){
           const kr = await layers.counts.applyEdits({addFeatures: kids});
           const bad = kr.addFeatureResults.filter(r => r.error);
           if (bad.length) throw new Error("deviation rows failed: " + bad[0].error.message);
         }
+        // seal state follows the attestation: broken -> open, re-sealed ->
+        // sealed with this inspector/now. Failure must not lose the saved audit.
+        const binUpds = sealedBins.map(bn => {
+          if (binAnswers[bn.bin_code] !== "broken") return null;   // intact = unchanged
+          return {attributes: resealedOf(bn.bin_code)
+            ? {OBJECTID: bn.OBJECTID, seal_status: "sealed",
+               sealed_by: who.slice(0,64), sealed_date: Date.now()}
+            : {OBJECTID: bn.OBJECTID, seal_status: "open"}};
+        }).filter(Boolean);
+        if (binUpds.length)
+          await layers.bins.applyEdits({updateFeatures: binUpds})
+            .catch(e => { console.error(e);
+              toast("Audit saved, but updating bin seal state failed — re-seal it from Manage bins"); });
         if (newbies.length){
           const bl = newbies.map((t, n) => ({attributes:{asset_guid: a.GlobalID,
             asset_equipment_id: a.equipment_id, item_code: `FA-${stamp}-${n+1}`,
@@ -2543,8 +2891,7 @@ window.openNativeAudit = async () => {
         }
         if (failed.length)
           await layers.insp.applyEdits({updateFeatures:[{attributes:{OBJECTID: ar.objectId,
-            insp_notes: `Full audit: ${nd} deviation(s), ${nc} critical. `
-                      + `[photo upload failed: ${failed.join(", ")}]`}}]})
+            insp_notes: (noteBase + ` [photo upload failed: ${failed.join(", ")}]`).slice(0,1000)}}]})
             .catch(e => console.error(e));
         toast(`Audit submitted — ${result === "pass" ? "all items present" :
           nd + " deviation(s)" + (nc ? ", " + nc + " CRITICAL" : "")}`
@@ -2585,6 +2932,9 @@ async function processAssetAudit(x){
       where:`parentglobalid='{${String(ins.GlobalID).replace(/[{}]/g,"")}}'`,
       outFields:["item_code","item_desc","expected_qty","counted_qty","shortage_qty","item_condition","count_notes"], num:500});
     kids.features.forEach(kf => { const k = kf.attributes;
+      // sealed-bin attestation rows (bin-seal:intact/broken) are never issues —
+      // keep in sync with ops/audit_processor.py
+      if (String(k.count_notes||"").startsWith("bin-seal:")) return;
       const critFlag = String(k.count_notes||"").startsWith("[CRITICAL]");
       // only true deviations become issues — full-count forms (s123-beta)
       // submit every row, most of which are fine
