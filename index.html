@@ -1000,9 +1000,12 @@ async function showInventory(){
     if (csvLink) csvLink.onclick = ev => {   // data already on screen — no re-query
       ev.preventDefault();
       const out = [CSV_HEADER];
-      baseFs.features.forEach(f => { const b = f.attributes;
-        out.push(csvRow(a, b, effAdj(b), lastCount, binsByCode));
-      });
+      // bin members grouped first (by bin label), loose items after, stable
+      const key = b => { const bn = b.bin_code && binsByCode[b.bin_code];
+        return bn ? "0" + (bn.bin_label || b.bin_code) : "1"; };
+      baseFs.features.map((f, i) => [f.attributes, i])
+        .sort((p, q) => key(p[0]).localeCompare(key(q[0])) || p[1] - q[1])
+        .forEach(([b]) => out.push(csvRow(a, b, effAdj(b), lastCount, binsByCode)));
       downloadCSV(`inventory_${a.equipment_id}_${today()}.csv`, out);
     };
   } catch(e){ console.error(e); $("oBody").innerHTML = "Inventory unavailable: " + (e.message||e); }
@@ -1247,13 +1250,23 @@ window.openBinManager = async (from) => {
         outFields:["OBJECTID","bin_code","bin_label","bin_location","seal_status","sealed_by","sealed_date"],
         orderByFields:["OBJECTID"], num:200}),
       layers.baseline.queryFeatures({where:`asset_guid='{${guid}}'`,
-        outFields:["OBJECTID","item_code","item_desc","item_category","expected_qty","critical_item","bin_code"],
+        outFields:["OBJECTID","item_code","item_desc","item_category","expected_qty",
+                   "item_unit","critical_item","replace_qty","baseline_notes","bin_code"],
         orderByFields:["OBJECTID"], num:2000}),
     ]);
     bins = binFs.features.map(f => f.attributes);
     rows = baseFs.features.map(f => f.attributes);
   };
   const members = code => rows.filter(r => r.bin_code === code);
+  // Partial-quantity bins: an item's total can be split across bins + loose.
+  // Each portion is its OWN baseline row (audit/counts/issues/capabilities all
+  // work on rows, so every engine stays correct and the total is preserved).
+  // The loose remainder keeps the original item_code (old count history stays
+  // joined); the portion moved into a bin gets `<base>~n`. baseOf() ties the
+  // family back together for merges.
+  const baseOf = c => String(c||"").split("~")[0];
+  const looseSibIn = (pool, row) => pool.find(t => t.OBJECTID !== row.OBJECTID
+    && !t.bin_code && baseOf(t.item_code) === baseOf(row.item_code));
 
   const renderMain = () => {
     $("oTitle").textContent = "Bins — " + a.equipment_id;
@@ -1267,7 +1280,7 @@ window.openBinManager = async (from) => {
         <div class="binrow">
           <div style="flex:1;min-width:170px">${bn.seal_status === "sealed" ? "&#128274;" : "&#128275;"}
             <b>${esc(bn.bin_label || bn.bin_code)}</b>
-            <span class="asub">${esc(bn.bin_code)} · ${members(bn.bin_code).length} items ·
+            <span class="asub">${esc(bn.bin_code)} · ${members(bn.bin_code).length} items (${members(bn.bin_code).reduce((s,m)=>s+(m.expected_qty||0),0)} qty) ·
               ${bn.seal_status === "sealed"
                 ? `sealed ${fmtDate(bn.sealed_date)}${bn.sealed_by ? " by " + esc(bn.sealed_by) : ""}`
                 : "open (not sealed)"}${bn.bin_location ? " · " + esc(bn.bin_location) : ""}</span></div>
@@ -1326,10 +1339,25 @@ window.openBinManager = async (from) => {
       const mem = members(bn.bin_code);
       btn.disabled = true;
       try {
-        if (mem.length){   // release members FIRST so a failure can't orphan them
-          const r = await layers.baseline.applyEdits({updateFeatures:
-            mem.map(m => ({attributes:{OBJECTID: m.OBJECTID, bin_code: null}}))});
-          if ((r.updateFeatureResults||[]).some(q => q.error))
+        if (mem.length){   // release members FIRST so a failure can't orphan them;
+          // split portions merge back into their loose sibling so quantities recombine
+          const upd = [], del = [], acc = {};   // acc: loose-sib OBJECTID -> merged state
+          mem.forEach(m => {
+            const sib = looseSibIn(rows, m);
+            if (sib){
+              const t = acc[sib.OBJECTID] = acc[sib.OBJECTID]
+                || {qty: sib.expected_qty||0, rq: sib.replace_qty, crit: sib.critical_item};
+              t.qty += m.expected_qty||0;
+              t.rq = (t.rq==null && m.replace_qty==null) ? null : (t.rq||0)+(m.replace_qty||0);
+              if (m.critical_item === "yes") t.crit = "yes";
+              del.push(m.OBJECTID);
+            } else upd.push({attributes:{OBJECTID: m.OBJECTID, bin_code: null}});
+          });
+          Object.entries(acc).forEach(([oid, t]) => upd.push({attributes:
+            {OBJECTID:+oid, expected_qty: t.qty, replace_qty: t.rq, critical_item: t.crit}}));
+          const r = await layers.baseline.applyEdits({updateFeatures: upd,
+            deleteFeatures: del.map(o => ({objectId: o}))});
+          if (["updateFeatureResults","deleteFeatureResults"].flatMap(k => r[k]||[]).some(q => q.error))
             throw new Error("failed to release the bin's items");
         }
         await layers.bins.applyEdits({deleteFeatures:[{objectId: bn.OBJECTID}]});
@@ -1341,20 +1369,29 @@ window.openBinManager = async (from) => {
 
   const renderAssign = bn => {
     $("oTitle").textContent = `Bin items — ${bn.bin_label || bn.bin_code}`;
-    const sel = new Set(members(bn.bin_code).map(m => m.OBJECTID));
+    const inBin = new Set(members(bn.bin_code).map(m => m.OBJECTID));
     $("oBody").innerHTML = `
-      <div class="cd" style="margin-bottom:6px">Tick the items physically packed in this bin.
-      Items already in another bin are shown disabled. &#9888; = critical item (allowed in a
-      bin — the seal is the attestation).</div>
+      <div class="cd" style="margin-bottom:6px">Tick the items physically packed in this bin, and
+      set <b>how many</b> go in it — a partial quantity leaves the rest as its own loose line
+      (or available to other bins). Items in another bin are shown disabled.
+      &#9888; = critical item (allowed in a bin — the seal is the attestation).</div>
       <input id="baSearch" type="text" class="nfin" placeholder="Search items…" style="width:100%">
       ${rows.map(r => {
         const other = r.bin_code && r.bin_code !== bn.bin_code;
+        const isIn = inBin.has(r.OBJECTID);
+        const sib = isIn ? looseSibIn(rows, r) : null;
+        const hint = other ? " · in " + esc(r.bin_code)
+          : isIn ? (sib ? ` · ${sib.expected_qty ?? 0} more loose` : "")
+          : ` · ${r.expected_qty ?? 1} loose`;
         return `<label class="binitem" data-search="${esc((r.item_desc + " " + (r.item_code||"")).toLowerCase())}"
           style="display:flex;gap:8px;align-items:center;padding:7px 0;border-bottom:1px dashed var(--border);font-size:13.5px;${other ? "opacity:.45" : "cursor:pointer"}">
-          <input type="checkbox" data-boid="${r.OBJECTID}" ${sel.has(r.OBJECTID) ? "checked" : ""} ${other ? "disabled" : ""}>
+          <input type="checkbox" data-boid="${r.OBJECTID}" ${isIn ? "checked" : ""} ${other ? "disabled" : ""}>
           <span style="flex:1">${esc(r.item_desc)}${r.critical_item === "yes" ? ' <span style="color:var(--warn)">&#9888;</span>' : ""}
-            <span class="asub">${esc(r.item_code||"")}${other ? " · in " + esc(r.bin_code) : ""}</span></span>
-          <span class="cd" style="flex:none">${r.expected_qty ?? ""}</span>
+            <span class="asub">${esc(r.item_code||"")}${hint}</span></span>
+          <input type="number" inputmode="decimal" step="any" min="0" class="nfin" data-bqty="${r.OBJECTID}"
+            value="${r.expected_qty ?? 1}" title="Quantity in this bin"
+            style="width:64px;flex:none;margin:0;text-align:center;display:${isIn ? "" : "none"}">
+          <span class="cd" style="flex:none;width:34px;text-align:right">${isIn ? "" : (r.expected_qty ?? "")}</span>
         </label>`;
       }).join("")}
       <button class="btn red" id="baSave" style="width:100%;margin:12px 0 6px">Save bin items</button>
@@ -1362,22 +1399,100 @@ window.openBinManager = async (from) => {
     $("baSearch").oninput = e => { const q = e.target.value.trim().toLowerCase();
       $("oBody").querySelectorAll(".binitem").forEach(l =>
         l.style.display = !q || l.dataset.search.includes(q) ? "flex" : "none"); };
+    // ticking an item reveals its quantity box (prefilled with the full amount)
+    $("oBody").querySelectorAll("[data-boid]").forEach(cb => cb.onchange = () => {
+      const qi = $("oBody").querySelector(`[data-bqty="${cb.dataset.boid}"]`);
+      if (qi) qi.style.display = cb.checked ? "" : "none";
+    });
     $("baBack").onclick = () => renderMain();
     $("baSave").onclick = async () => {
       $("baSave").disabled = true;
       try {
-        const upds = [];
+        // work on copies; diff at the end so multiple moves against the same
+        // loose sibling compose, and totals are preserved by construction
+        const w = new Map(rows.map(r => [r.OBJECTID, Object.assign({}, r)]));
+        const killed = new Set(), newRows = [];
+        const wLoose = row => [...w.values()].find(t => t.OBJECTID !== row.OBJECTID
+          && !killed.has(t.OBJECTID) && !t.bin_code && baseOf(t.item_code) === baseOf(row.item_code));
+        const usedCodes = new Set(rows.map(t => t.item_code));
+        const splitCode = base => { let n = 2, c;
+          do { const s = "~" + n++; c = base.slice(0, 24 - s.length) + s; } while (usedCodes.has(c));
+          usedCodes.add(c); return c; };
+        // move q units out of src into a new row (binCode or loose); the
+        // replace-at threshold travels proportionally with the moving portion
+        const splitOff = (src, q, binCode) => {
+          const total = src.expected_qty ?? 1;
+          let rqMove = null;
+          if (src.replace_qty != null){
+            rqMove = Math.min(src.replace_qty, Math.round(src.replace_qty * q / total));
+            src.replace_qty -= rqMove;
+          }
+          src.expected_qty = total - q;
+          newRows.push({attributes:{asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
+            item_code: splitCode(baseOf(src.item_code)), item_desc: src.item_desc,
+            item_category: src.item_category, expected_qty: q, item_unit: src.item_unit,
+            critical_item: src.critical_item, replace_qty: rqMove,
+            baseline_source: "bin-split", baseline_notes: src.baseline_notes,
+            bin_code: binCode}});
+        };
+        let err = null;
         $("oBody").querySelectorAll("[data-boid]").forEach(cb => {
-          if (cb.disabled) return;
-          const oid = +cb.dataset.boid;
-          const r = rows.find(t => t.OBJECTID === oid);
-          const want = cb.checked ? bn.bin_code : null;
-          if ((r.bin_code || null) !== want) upds.push({attributes:{OBJECTID: oid, bin_code: want}});
+          if (cb.disabled || err) return;
+          const oid = +cb.dataset.boid, r = w.get(oid);
+          const wasIn = inBin.has(oid);
+          const qEl = $("oBody").querySelector(`[data-bqty="${oid}"]`);
+          const q = parseFloat(qEl && qEl.value);
+          if (cb.checked && (isNaN(q) || q <= 0)){ err = `${r.item_desc}: quantity must be above 0`; return; }
+          if (!cb.checked && wasIn){
+            // unassign: merge back into the loose sibling when there is one
+            const sib = wLoose(r);
+            if (sib){
+              sib.expected_qty = (sib.expected_qty||0) + (r.expected_qty||0);
+              sib.replace_qty = (sib.replace_qty==null && r.replace_qty==null)
+                ? null : (sib.replace_qty||0) + (r.replace_qty||0);
+              if (r.critical_item === "yes") sib.critical_item = "yes";
+              killed.add(oid);
+            } else r.bin_code = null;
+          } else if (cb.checked && !wasIn){
+            const total = r.expected_qty ?? 1;
+            if (q > total){ err = `${r.item_desc}: only ${total} available on this line`; return; }
+            if (q === total) r.bin_code = bn.bin_code;
+            else splitOff(r, q, bn.bin_code);   // loose remainder keeps the original code
+          } else if (cb.checked && wasIn && q !== (r.expected_qty ?? 1)){
+            const cur = r.expected_qty ?? 1;
+            if (q < cur){          // shrink the bin's share -> back to loose
+              const give = cur - q;
+              const sib = wLoose(r);
+              if (sib){ r.expected_qty = q; sib.expected_qty = (sib.expected_qty||0) + give; }
+              else splitOff(r, give, null);
+            } else {               // grow the bin's share <- pull from loose
+              const need = q - cur;
+              const sib = wLoose(r);
+              if (!sib || (sib.expected_qty||0) < need){
+                err = `${r.item_desc}: only ${sib ? sib.expected_qty : 0} loose available`; return; }
+              sib.expected_qty -= need; r.expected_qty = q;
+              if (sib.expected_qty === 0) killed.add(sib.OBJECTID);
+            }
+          }
         });
-        if (!upds.length){ toast("No changes"); $("baSave").disabled = false; return; }
-        const r = await layers.baseline.applyEdits({updateFeatures: upds});
-        if ((r.updateFeatureResults||[]).some(q => q.error)) throw new Error("some items failed to save");
-        toast(`Saved — ${upds.length} item(s) updated`);
+        if (err){ toast(err); $("baSave").disabled = false; return; }
+        const updates = [], deletes = [];
+        rows.forEach(orig => {
+          if (killed.has(orig.OBJECTID)){ deletes.push(orig.OBJECTID); return; }
+          const cur = w.get(orig.OBJECTID), at = {};
+          ["bin_code","expected_qty","replace_qty","critical_item"].forEach(f => {
+            if ((cur[f] ?? null) !== (orig[f] ?? null)) at[f] = cur[f] ?? null; });
+          if (Object.keys(at).length)
+            updates.push({attributes: Object.assign({OBJECTID: orig.OBJECTID}, at)});
+        });
+        if (!updates.length && !newRows.length && !deletes.length){
+          toast("No changes"); $("baSave").disabled = false; return;
+        }
+        const r = await layers.baseline.applyEdits({updateFeatures: updates,
+          addFeatures: newRows, deleteFeatures: deletes.map(o => ({objectId: o}))});
+        if (["updateFeatureResults","addFeatureResults","deleteFeatureResults"]
+            .flatMap(k => r[k]||[]).some(q2 => q2.error)) throw new Error("some items failed to save");
+        toast(`Saved — ${updates.length} updated${newRows.length ? `, ${newRows.length} split` : ""}${deletes.length ? `, ${deletes.length} merged` : ""}`);
         await load(); renderMain();
       } catch(e){ console.error(e); toast("Save failed: " + (e.message||e)); $("baSave").disabled = false; }
     };
@@ -1486,6 +1601,12 @@ window.openExportCSV = () => {
             const k = String(c.item_code || c.item_desc || "").trim().toLowerCase();
             (adjBy[aid] = adjBy[aid] || {})[k] = c; });
       }
+      // within each asset: bin members grouped first (by bin label), loose after
+      const binKey = b => { const bn = b.bin_code && (binsByAid[b.asset_equipment_id]||{})[b.bin_code];
+        return bn ? "0" + (bn.bin_label || b.bin_code) : "1"; };
+      base = base.map((b, i) => [b, i]).sort((p, q) =>
+        String(p[0].asset_equipment_id).localeCompare(String(q[0].asset_equipment_id))
+        || binKey(p[0]).localeCompare(binKey(q[0])) || p[1] - q[1]).map(p => p[0]);
       const rows = [CSV_HEADER];
       base.forEach(b => {
         if (critOnly && b.critical_item !== "yes") return;
@@ -1583,23 +1704,39 @@ const prepIssueList = issFs => issFs.features.map(f => { const i=f.attributes;
 }).join("") || "<li>No open issues on record.</li>";
 function prepInvSection(baseFs, bins){
   bins = bins || {};
-  let invRows = "", lastCat = null;
-  baseFs.features.forEach(f => { const b=f.attributes;
+  const feats = baseFs.features.map(f => f.attributes);
+  if (!feats.length)
+    return `<h2>Expected inventory</h2><p class="note">No baseline on file for this asset yet — record what you find in the Audit Inventory survey to establish one.</p>`;
+  // bins first (each its own section), loose items after in walk/survey order
+  const binned = {}, loose = [];
+  feats.forEach(b => { const bn = b.bin_code && bins[b.bin_code];
+    if (bn) (binned[b.bin_code] = binned[b.bin_code] || []).push(b); else loose.push(b); });
+  const itemRow = b => `<tr><td>${esc(b.item_desc)}</td><td>${esc(b.item_code)}</td><td style="text-align:center">${b.expected_qty??""}</td><td class="w"></td><td class="w"></td></tr>`;
+  let invRows = "";
+  Object.keys(binned).forEach(code => {
+    const bn = bins[code], mem = binned[code];
+    const sealed = bn.seal_status === "sealed";
+    invRows += `<tr class="sec"><td colspan="5">${sealed ? "&#128274; SEALED BIN" : "&#128275; BIN (open)"}:
+      ${esc(bn.bin_label || code)} — ${mem.length} items (${mem.reduce((s,m)=>s+(m.expected_qty||0),0)} qty)${sealed
+        ? ` · sealed ${fmtDate(bn.sealed_date)} — seal intact = all present; count only if broken` : ""}</td></tr>`;
+    invRows += mem.map(itemRow).join("");
+  });
+  let lastCat = null;
+  loose.forEach(b => {
     const cat = catLabel(b.item_category);
-    if (cat !== lastCat){ invRows += `<tr class="sec"><td colspan="5">${esc(cat)}</td></tr>`; lastCat=cat; }
-    const bn = b.bin_code && bins[b.bin_code];
-    invRows += `<tr><td>${esc(b.item_desc)}</td><td>${esc(b.item_code)}${bn ? `<br><small>${bn.seal_status === "sealed" ? "&#128274; " : ""}bin: ${esc(bn.bin_label || b.bin_code)}</small>` : ""}</td><td style="text-align:center">${b.expected_qty??""}</td><td class="w"></td><td class="w"></td></tr>`;
+    if (cat !== lastCat){ invRows += `<tr class="sec"><td colspan="5">${Object.keys(binned).length ? "LOOSE — " : ""}${esc(cat)}</td></tr>`; lastCat = cat; }
+    invRows += itemRow(b);
   });
   const sealed = Object.values(bins).filter(bn => bn.seal_status === "sealed").length;
-  return baseFs.features.length
-    ? `<h2>Expected inventory (${baseFs.features.length} line items — count against this)</h2>
-       <p class="note">Groups and order match the Audit Inventory survey. Record counts in the
+  return `<h2>Expected inventory (${feats.length} line items — count against this)</h2>
+       <p class="note">${Object.keys(binned).length
+         ? "Sealed bins are listed first; loose items follow in survey order."
+         : "Groups and order match the Audit Inventory survey."} Record counts in the
        Audit Inventory survey; this sheet is the offline fallback.</p>
        ${sealed ? `<p class="note"><b>&#128274; ${sealed} sealed bin(s) aboard</b> — if a bin's seal
        is intact, verify the seal instead of counting its items; count item-by-item only if the
        seal is broken or missing, then re-seal.</p>` : ""}
-       <table><tr><th>Item</th><th>Item #</th><th>Expected</th><th>Counted</th><th>Replace</th></tr>${invRows}</table>`
-    : `<h2>Expected inventory</h2><p class="note">No baseline on file for this asset yet — record what you find in the Audit Inventory survey to establish one.</p>`;
+       <table><tr><th>Item</th><th>Item #</th><th>Expected</th><th>Counted</th><th>Replace</th></tr>${invRows}</table>`;
 }
 const prepInstructions = () => `
   <h2>Inspection instructions</h2>
@@ -1622,7 +1759,7 @@ async function prepFetch(x){
       outFields:["item_category","item_desc","item_code","expected_qty","bin_code"],
       orderByFields:["OBJECTID"], num:2000}),  // workbook order = survey order
     layers.bins.queryFeatures({where:`asset_guid='{${guid}}'`,
-      outFields:["bin_code","bin_label","seal_status"], num:200})
+      outFields:["bin_code","bin_label","seal_status","sealed_date"], num:200})
       .catch(() => ({features:[]})),   // bins table may not exist yet
   ]);
   const bins = {};
