@@ -687,8 +687,11 @@ function select(eid, zoom){
   $("btnInsp").style.display = showDOT ? "" : "none";
   $("btnCount").style.display = showInv ? "" : "none";
   $("adminRow").style.display = (window.isAdmin && window.viewMode === "admin") ? "" : "none";
-  // asset-level maintenance grids (comms/ice/boom reel/airboat) when that clock exists
-  const mkinds = Object.keys(ASSET_MAINT).filter(hasClock);
+  // asset-level maintenance grids (generator/comms/ice/boom reel/airboat) when
+  // an ASSET-level clock of that kind exists (equipment-level generator clocks
+  // carry _via and are handled by the guide's per-equipment flow)
+  const mkinds = Object.keys(ASSET_MAINT)
+    .filter(k => x.clocks.some(c => c.sched_type === k && !c._via));
   const am = $("auditMaint");
   am.style.display = mkinds.length ? "" : "none";
   am.innerHTML = mkinds.map(k =>
@@ -1974,6 +1977,14 @@ async function renderGuide(x){
   try { await processAssetAudit(x); } catch(e){ console.warn("live processing skipped:", e); }
   const t0 = new Date(); t0.setHours(0,0,0,0);
   const eqG = x.equip.map(e => "'{"+String(e.GlobalID).replace(/[{}]/g,"")+"}'");
+  // asset-level maintenance grids (no equipment child — generator aboard a
+  // container, comms/ice/reel/airboat trailers): shown as guide steps too
+  const amKinds = Object.keys(ASSET_MAINT)
+    .filter(k => x.clocks.some(c => c.sched_type === k && !c._via));
+  const mWhere = [
+    eqG.length ? `equip_guid IN (${eqG.join(",")})` : null,
+    amKinds.length ? `(asset_equipment_id='${a.equipment_id}' AND equip_guid IS NULL)` : null,
+  ].filter(Boolean).join(" OR ");
   const [audFs, issFs, mFs, binFs] = await Promise.all([
     layers.insp.queryFeatures({where:`asset_guid='{${aguid}}' AND insp_type IN ('audit_inventory','asset_detail_check')`
         + ` AND (insp_type <> 'audit_inventory' OR app_version IN ${AUDIT_APPS})`,
@@ -1981,14 +1992,18 @@ async function renderGuide(x){
       orderByFields:["insp_date DESC"], num:20}),
     layers.issues.queryFeatures({where:`asset_guid='{${aguid}}' AND issue_status IN ('open','in_progress') AND source_type='audit'`,
       outFields:["issue_severity","issue_desc","parts_needed"], num:200}),
-    eqG.length ? layers.maint.queryFeatures({where:`equip_guid IN (${eqG.join(",")})`,
-      outFields:["equip_guid","event_date"], orderByFields:["event_date DESC"], num:100})
+    mWhere ? layers.maint.queryFeatures({where: mWhere,
+      outFields:["equip_guid","maint_kind","event_date"], orderByFields:["event_date DESC"], num:100})
       : Promise.resolve({features:[]}),
     layers.bins.queryFeatures({where:`asset_guid='{${aguid}}' AND seal_status='sealed'`,
       outFields:["bin_code"], num:200}).catch(() => ({features:[]})),
   ]);
-  const doneToday = new Set(mFs.features.filter(f => (f.attributes.event_date||0) >= +t0)
+  const doneToday = new Set(mFs.features.filter(f => f.attributes.equip_guid
+                                        && (f.attributes.event_date||0) >= +t0)
                                         .map(f => g8s(f.attributes.equip_guid)));
+  const amDoneToday = new Set(mFs.features.filter(f => !f.attributes.equip_guid
+                                        && (f.attributes.event_date||0) >= +t0)
+                                        .map(f => f.attributes.maint_kind));
   const insps = audFs.features.map(f => f.attributes);
   const latest = insps.find(i => i.insp_type === "audit_inventory");
   const auditToday = latest && (latest.insp_date||0) >= +t0;
@@ -2014,13 +2029,16 @@ async function renderGuide(x){
     lastDetails ? `last confirmed ${fmtDate(lastDetails.insp_date)}` : "never confirmed",
     lbtn("openNativeDetails()"));
   html += cat("Step 2 — Equipment maintenance");
-  html += x.equip.length ? x.equip.map(e => {
+  const eqSteps = x.equip.map(e => {
     const kind = maintKind(e.equip_type);
     return step(doneToday.has(g8s(e.GlobalID)),
       `${SURVEY_TITLES[kind]} — ${esc(e.equip_id)}`,
       kind === "hpp" ? "includes the skimmer function test" : null,
       lbtn(`openMaint('${kind}','${String(e.GlobalID).replace(/[{}]/g,"")}','${(e.equip_id||"").replace(/'/g,"")}')`));
-  }).join("") : `<div class="cd" style="padding:4px 0 8px">No powered equipment linked — go straight to the walk.</div>`;
+  }).join("") + amKinds.map(k =>
+    step(amDoneToday.has(k), `${ASSET_MAINT[k].label} — ${esc(a.equipment_id)}`, null,
+      lbtn(`openNativeAssetMaint('${k}',true)`))).join("");
+  html += eqSteps || `<div class="cd" style="padding:4px 0 8px">No powered equipment linked — go straight to the walk.</div>`;
   html += cat("Step 3 — Inventory walk");
   html += step(!!auditToday, "Count against the item table — search, then edit the quantities that differ",
     latest ? `last audit ${fmtDate(latest.insp_date)} — ${verdictBadge(latest.insp_result)}` : "never audited",
@@ -2285,6 +2303,9 @@ const HPP_YANMAR = [
 // closes that clock. Task lists from the S: "Trailer Inspection Forms"
 // checklists (Oct 2023 edits). Native-only; free-entry S123 stays the fallback.
 const ASSET_MAINT = {
+  // asset-level generator (heliportable containers etc. — generator aboard but
+  // no equipment child row); same Honda task list as the equipment-level grid
+  generator_maint: {label:"Generator Maint", code:"GEN", tasks:GEN_TASKS},
   comms_trailer_maint: {label:"Comms Trailer Maint", code:"COMMS", tasks:[
     ["Cisco C819GW-LTE router","Plug in, power on; check broadcast and internet connectivity with a mobile device."],
     ["CradlePoint router","Plug in, power on; check broadcast and internet connectivity with a mobile device."],
@@ -2528,11 +2549,12 @@ window.openNativeMaint = (kind, equipGuid, equipId) => {
 };
 
 // ---- native asset-level maintenance (comms / ice / boom reel / airboat task grids)
-window.openNativeAssetMaint = (kind) => {
+window.openNativeAssetMaint = (kind, fromGuide) => {
   const x = byId[selected]; if (!x) return;
   const a = x.attrs, cfg = ASSET_MAINT[kind];
   if (!cfg) return;
-  openOverlay(`${cfg.label} — ${a.equipment_id}`, {html:""});
+  // stack:true only when launched from the audit guide (depth-2 = guide child)
+  openOverlay(`${cfg.label} — ${a.equipment_id}`, {html:"", stack: !!fromGuide});
   const taskRow = (t, i) => `<div class="taskrow" data-i="${i}">
     <div class="tlab"><b>${esc(t[0])}</b> — <span style="color:var(--text-dim)">${esc(t[1])}</span></div>
     <select data-tsel="1"><option value="completed">Completed</option><option value="failed">Failed</option>
