@@ -301,7 +301,7 @@ require([
   "esri/Map","esri/views/MapView","esri/layers/GraphicsLayer","esri/Graphic",
   "esri/geometry/Point","esri/layers/FeatureLayer","esri/widgets/Locate",
   "esri/core/reactiveUtils","esri/geometry/support/webMercatorUtils"
-], function(OAuthInfo, esriId, Map, MapView, GraphicsLayer, Graphic, Point, FeatureLayer, Locate, reactiveUtils, webMercatorUtils){
+], function(OAuthInfo, esriId, EsriMap, MapView, GraphicsLayer, Graphic, Point, FeatureLayer, Locate, reactiveUtils, webMercatorUtils){
 
 const SVC = "https://services6.arcgis.com/Ji79lWGR5B33LhY7/arcgis/rest/services/WRI_BNSF_Asset_Readiness/FeatureServer";
 const PORTAL = "https://www.arcgis.com";
@@ -462,7 +462,7 @@ async function boot(force){
     });
   } catch(e){ console.warn("region overlay unavailable", e); }
   view = new MapView({
-    container:"mapDiv", map:new Map({
+    container:"mapDiv", map:new EsriMap({
       basemap: document.documentElement.dataset.theme === "light" ? "gray-vector" : "dark-gray-vector",
       layers: regionLayer ? [regionLayer, gLayer] : [gLayer]}),
     center:[-105,44], zoom:4, popupEnabled:false,
@@ -1358,8 +1358,10 @@ window.openBinManager = async (from) => {
           });
           Object.entries(acc).forEach(([oid, t]) => upd.push({attributes:
             {OBJECTID:+oid, expected_qty: t.qty, replace_qty: t.rq, critical_item: t.crit}}));
+          // quantity moves between rows: rollback so a partial failure can't
+          // grow a sibling without deleting the portion it absorbed
           const r = await layers.baseline.applyEdits({updateFeatures: upd,
-            deleteFeatures: del.map(o => ({objectId: o}))});
+            deleteFeatures: del.map(o => ({objectId: o}))}, {rollbackOnFailureEnabled: true});
           if (["updateFeatureResults","deleteFeatureResults"].flatMap(k => r[k]||[]).some(q => q.error))
             throw new Error("failed to release the bin's items");
         }
@@ -1491,8 +1493,11 @@ window.openBinManager = async (from) => {
         if (!updates.length && !newRows.length && !deletes.length){
           toast("No changes"); $("baSave").disabled = false; return;
         }
+        // a split is add+update and an unassign is update+delete — all or
+        // nothing, or a partial failure double-counts or loses quantity
         const r = await layers.baseline.applyEdits({updateFeatures: updates,
-          addFeatures: newRows, deleteFeatures: deletes.map(o => ({objectId: o}))});
+          addFeatures: newRows, deleteFeatures: deletes.map(o => ({objectId: o}))},
+          {rollbackOnFailureEnabled: true});
         if (["updateFeatureResults","addFeatureResults","deleteFeatureResults"]
             .flatMap(k => r[k]||[]).some(q2 => q2.error)) throw new Error("some items failed to save");
         toast(`Saved — ${updates.length} updated${newRows.length ? `, ${newRows.length} split` : ""}${deletes.length ? `, ${deletes.length} merged` : ""}`);
