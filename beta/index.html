@@ -762,7 +762,7 @@ function select(eid, zoom){
   $("detail").classList.add("open");
   loadHistory(x);
   renderList(currentListItems());
-  if (zoom && x.geom) view.goTo({target:x.geom, zoom:9});
+  if (zoom && x.geom) view.goTo({target:x.geom, zoom:9}).catch(() => {});   // view not ready yet: harmless
   if (window.innerWidth<=760) hidePanel();
 }
 
@@ -801,7 +801,7 @@ $("dClose").onclick = () => {
   $("detail").classList.remove("open"); selected=null; drawMarkers(currentListItems());
   if (window.innerWidth<=760) showPanel();
 };
-$("btnZoom").onclick = () => { const x=byId[selected]; if (x&&x.geom) { view.goTo({target:x.geom, zoom:12}); if(window.innerWidth<=760) hidePanel(); } };
+$("btnZoom").onclick = () => { const x=byId[selected]; if (x&&x.geom) { view.goTo({target:x.geom, zoom:12}).catch(() => {}); if(window.innerWidth<=760) hidePanel(); } };
 $("btnDir").onclick = () => {
   const x = byId[selected];
   if (!x || !x.geom) return toast("No coordinates for this asset");
