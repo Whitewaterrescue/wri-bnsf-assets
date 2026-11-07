@@ -23,7 +23,11 @@
   }
   :root[data-theme="light"] header .logochip{border:1px solid var(--border)}
   html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;overflow:hidden}
-  #app{display:grid;grid-template-rows:48px 1fr;height:100%;height:100dvh}
+  #app{display:grid;grid-template-rows:48px auto 1fr;height:100%;height:100dvh}
+  #offBar{display:none;height:28px;line-height:28px;padding:0 12px;font-size:12.5px;font-weight:700;text-align:center;
+    background:var(--warn);color:#111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;position:relative;z-index:46}
+  body.offbar #offBar{display:block}
+  #offBar.back{background:var(--deployed);color:#fff}
   header{display:flex;align-items:center;gap:10px;padding:0 calc(12px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left));background:var(--surface);border-bottom:2px solid var(--accent);min-width:0}
   header h1{font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
   header .logochip{background:#fff;border-radius:6px;padding:3px 7px;display:flex;align-items:center;flex:none}
@@ -133,6 +137,7 @@
     #btnZoom{display:none}  /* detail covers the map on phones — nothing to zoom to */
     /* Map tab: collapse the panel so the map shows through; bottom bar stays */
     #panel.maponly{inset:48px 0 auto 0;height:auto;border-right:none}
+    body.offbar #panel{top:76px}
     #panel.maponly #search,#panel.maponly #filters,#panel.maponly #list,
     #panel.maponly #nearPanel,#panel.maponly #statsPanel{display:none !important}
   }
@@ -258,6 +263,7 @@
     <button class="wri" id="bugBtn" title="Report a problem to the developers" aria-label="Report a problem">&#9873;<span class="hl">Report a problem</span></button>
     <button class="wri" id="wriToggle" title="Show/hide WRI internal tools">WRI<span class="hl">tools</span></button>
   </header>
+  <div id="offBar" role="status"></div>
   <div id="main">
     <div id="panel">
       <div id="tabs">
@@ -312,6 +318,7 @@
     <div class="cd" id="auditHelp" style="margin-top:6px">Inventory audit: count what's aboard (yearly).
       DOT annual: road-safety check of the trailer itself.</div>
     <div id="dDraft"></div>
+    <div id="dOff"></div>
     <div class="btns" id="auditMaint" style="display:none"></div>
     <div class="btns">
       <button class="btn red" id="btnIssue">Report Issue</button>
@@ -352,8 +359,8 @@ require([
   "esri/identity/OAuthInfo","esri/identity/IdentityManager",
   "esri/Map","esri/views/MapView","esri/layers/GraphicsLayer","esri/Graphic",
   "esri/geometry/Point","esri/layers/FeatureLayer","esri/widgets/Locate",
-  "esri/core/reactiveUtils","esri/geometry/support/webMercatorUtils"
-], function(OAuthInfo, esriId, EsriMap, MapView, GraphicsLayer, Graphic, Point, FeatureLayer, Locate, reactiveUtils, webMercatorUtils){
+  "esri/core/reactiveUtils","esri/geometry/support/webMercatorUtils","esri/rest/support/FeatureSet"
+], function(OAuthInfo, esriId, EsriMap, MapView, GraphicsLayer, Graphic, Point, FeatureLayer, Locate, reactiveUtils, webMercatorUtils, FeatureSet){
 
 const SVC = "https://services6.arcgis.com/Ji79lWGR5B33LhY7/arcgis/rest/services/WRI_BNSF_Asset_Readiness/FeatureServer";
 const PORTAL = "https://www.arcgis.com";
@@ -481,7 +488,8 @@ async function refreshDrafts(){
   if (assets.length) renderList(currentListItems());
   if (selected && byId[selected]) showDraftNote(byId[selected]);
 }
-const draftTag = eid => { const d = draftIndex.get(eid); if (!d) return "";
+const draftTag = eid => { const d = draftIndex.get(eid);
+  if (!d) return isOff() && !offSaved()[eid] ? ` · <span style="color:var(--text-muted)">not saved for offline</span>` : "";
   return ` · <span class="inprog">${d.pending ? "&#8682; waiting to send" : "&#9208; audit in progress"}</span>`; };
 function showDraftNote(x){
   const el = $("dDraft"); if (!el) return;
@@ -497,6 +505,8 @@ function showDraftNote(x){
 function sendPending(eid){
   if (!byId[eid]) return;
   if (navigator.onLine === false) return toast("Still no signal — it will keep waiting on this phone");
+  if (window.__offline) return toast(OFF.back ? "Signal is back — tap the blue strip at the top to sign in, then Send"
+                                             : "No signal yet — it keeps waiting on this phone");
   select(eid, true);
   window.__autoSend = eid;
   openNativeAudit();
@@ -582,6 +592,219 @@ const layers = {
   bins:  new FeatureLayer({url: SVC + "/13"}),   // sealed inventory bins
 };
 
+// ================= offline (Cody 2026-11-07): the app opens with no signal =================
+// Every read is kept on this phone (IndexedDB "ar_offline"):
+//  - "q": each query's last answer, by its exact parameters (the fleet list,
+//    due dates, open problems, trip ...)
+//  - "snap": each trailer the crew opened or saved for offline, kept WHOLE per
+//    table (items, bins, issues, inspections, maintenance). Any screen's query
+//    about that trailer is answered from it with a small SQL evaluator, so
+//    offline works for every screen without each one being wired up.
+// With no signal, or a reply slower than 12 s, the saved copy answers and the
+// strip under the header says how old it is. Writes never leave a phone that
+// opened offline (no sign-in redirect into a dead zone): audits wait on the
+// phone and send after signal + sign-in come back. sw.js keeps the app itself.
+const offDB = (mode, store, fn) => new Promise((ok, no) => {
+  const rq = indexedDB.open("ar_offline2", 1);
+  rq.onupgradeneeded = () => { const d = rq.result; d.createObjectStore("q"); d.createObjectStore("snap"); };
+  rq.onerror = () => no(rq.error);
+  rq.onsuccess = () => {
+    const tx = rq.result.transaction(store, mode), r = fn(tx.objectStore(store));
+    tx.oncomplete = () => ok(r && r.result); tx.onerror = () => no(tx.error);
+  };
+});
+const offGet = (st, k) => offDB("readonly", st, o => o.get(k)).catch(() => null);
+const offPut = (st, k, v) => offDB("readwrite", st, o => o.put(v, k)).catch(e => console.warn("offline save failed", e));
+const offAll = st => offDB("readonly", st, o => o.getAll()).catch(() => []);
+const stableKey = p => JSON.stringify(Object.keys(p).sort().map(k => [k, p[k]]));
+const isOff = () => !!window.__offline || navigator.onLine === false;
+const OFF = {staleTs: null, back: false};   // back = a real request got through after an offline open
+const offSaved = () => { try { return JSON.parse(localStorage.getItem("ar_off_saved") || "{}"); } catch(e){ return {}; } };
+const shortWhen = t => new Date(t).toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"});
+
+// SQL where evaluator — same grammar as tests/mock_service.cjs (keep in sync):
+// = <> < > <= >=, IN / NOT IN, LIKE, IS [NOT] NULL, AND / OR / NOT, ( ),
+// TIMESTAMP 'yyyy-mm-dd hh:mm:ss'. GUIDs compare without braces, any case.
+const isGuidStr = v => typeof v === "string" && /^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$/i.test(v);
+const sqlNorm = v => (isGuidStr(v) ? v.replace(/[{}]/g, "").toLowerCase() : v);
+function sqlTokens(src){
+  const re = /\s*(?:('(?:[^']|'')*')|(\d+(?:\.\d+)?)|(<=|>=|<>|!=|=|<|>|\(|\)|,)|([A-Za-z_][A-Za-z0-9_.]*))/y;
+  const out = []; let m;
+  while (re.lastIndex < src.length){
+    const at = re.lastIndex;
+    if (!(m = re.exec(src))){ if (/^\s*$/.test(src.slice(at))) break; throw new Error("SQL at: " + src.slice(at)); }
+    if (m[1] !== undefined) out.push({t:"str", v:m[1].slice(1, -1).replace(/''/g, "'")});
+    else if (m[2] !== undefined) out.push({t:"num", v:+m[2]});
+    else if (m[3] !== undefined) out.push({t:"op", v:m[3]});
+    else out.push({t:"id", v:m[4]});
+  }
+  return out;
+}
+function sqlWhere(sql){
+  const tk = sqlTokens(sql || "1=1"); let i = 0;
+  const kw = w => tk[i] && tk[i].t === "id" && tk[i].v.toUpperCase() === w;
+  const eat = w => { if (kw(w)){ i++; return true; } return false; };
+  const op = o => tk[i] && tk[i].t === "op" && tk[i].v === o;
+  const operand = () => {
+    const t = tk[i++];
+    if (!t) throw new Error("SQL: unexpected end");
+    if (t.t === "str") return () => sqlNorm(t.v);
+    if (t.t === "num") return () => t.v;
+    if (t.t === "id" && t.v.toUpperCase() === "TIMESTAMP"){ const ms = Date.parse(tk[i++].v.replace(" ", "T") + "Z"); return () => ms; }
+    if (t.t === "id" && t.v.toUpperCase() === "NULL") return () => null;
+    if (t.t === "id") return r => sqlNorm(r[t.v] === undefined ? null : r[t.v]);
+    throw new Error("SQL operand " + JSON.stringify(t));
+  };
+  const cmp = () => {
+    if (op("(")){ i++; const e = or(); i++; return e; }
+    const a = operand(); const neg = eat("NOT");
+    if (eat("IN")){ i++; const list = [];
+      while (!op(")")){ list.push(operand()); if (op(",")) i++; }
+      i++; return r => { const v = a(r), hit = list.some(f => f(r) === v); return neg ? !hit : hit; }; }
+    if (eat("LIKE")){ const p = operand();
+      return r => { const v = a(r); if (v == null) return false;
+        const rx = new RegExp("^" + String(p(r)).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/_/g, ".") + "$", "i");
+        const hit = rx.test(String(v)); return neg ? !hit : hit; }; }
+    if (eat("IS")){ const n2 = eat("NOT"); eat("NULL"); return r => (a(r) == null) !== n2; }
+    const o = tk[i++].v, b = operand();
+    return r => { const x = a(r), y = b(r);
+      if (x == null || y == null) return o === "<>" || o === "!=" ? x !== y : false;
+      const sx = typeof x === "string" ? x.toLowerCase() : x, sy = typeof y === "string" ? y.toLowerCase() : y;
+      switch (o){ case "=": return sx == sy; case "<>": case "!=": return sx != sy;
+        case "<": return x < y; case ">": return x > y; case "<=": return x <= y; case ">=": return x >= y; } };
+  };
+  const not = () => (eat("NOT") ? (f => r => !f(r))(not()) : cmp());
+  const and = () => { let f = not(); while (eat("AND")){ const g = f, h = not(); f = r => g(r) && h(r); } return f; };
+  const or = () => { let f = and(); while (eat("OR")){ const g = f, h = and(); f = r => g(r) || h(r); } return f; };
+  return or();
+}
+// answer a query from the saved trailers — only when the query names one of them
+function localAnswer(url, p, count, snaps){
+  const wl = String(p.where || "1=1").toLowerCase();
+  const mine = snaps.filter(sn => sn.url === url && sn.keys.some(k => wl.includes(k)));
+  if (!mine.length) return null;
+  let f; try { f = sqlWhere(p.where); } catch(e){ console.warn("offline: can't evaluate", p.where, e); return null; }
+  const seen = new Set(); let rows = [];
+  mine.forEach(sn => sn.rows.forEach(r => { if (!seen.has(r.OBJECTID) && f(r)){ seen.add(r.OBJECTID); rows.push(r); } }));
+  const t = Math.min(...mine.map(sn => sn.t));
+  if (count) return {t, n: rows.length};
+  const ob = [].concat(p.orderByFields || [])[0];
+  if (ob){ const [fld, dir] = String(ob).trim().split(/\s+/), sg = /desc/i.test(dir || "") ? -1 : 1;
+    rows.sort((x, y) => { const a = x[fld] ?? -Infinity, b = y[fld] ?? -Infinity; return (a > b ? 1 : a < b ? -1 : 0) * sg; }); }
+  const st = p.start || 0;
+  rows = rows.slice(st, st + (p.num || 2000));
+  return {t, fs: {features: rows.map(r => ({attributes: Object.assign({}, r)}))}};
+}
+// FeatureLayer.url is the SERVICE url (the table number lives in layerId) —
+// key by both, or tables with identical queries overwrite each other
+const lyrKey = L => L.url + "/" + L.layerId;
+function offlineWrap(lyr){
+  const oq = lyr.queryFeatures.bind(lyr), oc = lyr.queryFeatureCount.bind(lyr), oe = lyr.applyEdits.bind(lyr);
+  const run = async (p, count) => {
+    p = p || {};
+    const key = lyrKey(lyr) + "|" + (count ? "#" : "") + stableKey(p);
+    const saved = async () => (await offGet("q", key)) || localAnswer(lyrKey(lyr), p, count, await offAll("snap"));
+    const out = v => { OFF.staleTs = Math.min(OFF.staleTs || Infinity, v.t); offBar(); return count ? v.n : FeatureSet.fromJSON(v.fs); };
+    if (isOff()){
+      const v = await saved();
+      if (!v) throw new Error("Failed to fetch — no signal, and this isn't saved on this phone yet");
+      return out(v);
+    }
+    const net = (count ? oc(p) : oq(p)).then(r => {
+      offPut("q", key, count ? {t: Date.now(), n: r} : {t: Date.now(), fs: r.toJSON()}); return r; });
+    const SLOW = {};
+    let r = await Promise.race([net.catch(e => ({__e: e})), new Promise(ok => setTimeout(() => ok(SLOW), 12000))]);
+    if (r === SLOW){   // one bar: answer from the phone, let the reply refresh the copy
+      const v = await saved();
+      if (v){ net.catch(() => {}); return out(v); }
+      r = await net.catch(e => ({__e: e}));
+    }
+    if (r && r.__e){
+      const v = await saved();
+      if (v) return out(v);
+      throw r.__e;
+    }
+    return r;
+  };
+  lyr.queryFeatures = p => run(p, false);
+  lyr.queryFeatureCount = p => run(p, true);
+  // opened offline = no credential: fail fast instead of a sign-in redirect
+  lyr.applyEdits = (...a) => window.__offline
+    ? Promise.reject(new Error("Failed to fetch — no signal when the app opened; sign in to send")) : oe(...a);
+}
+Object.values(layers).forEach(offlineWrap);
+
+// keep whole trailers on the phone: what an audit, the guide, the card and
+// History read. Opening a card does it quietly; trips do it for every stop.
+async function saveForOffline(eids, quiet){
+  if (isOff()){ if (!quiet) toast("No signal — connect first, then save for offline"); return 0; }
+  const savedMap = offSaved(); let n = 0;
+  for (const eid of eids || []){
+    const x = byId[eid]; if (!x) continue;
+    const g = String(x.attrs.GlobalID).replace(/[{}]/g, "").toLowerCase();
+    const eqG = (x.equip || []).map(e => String(e.GlobalID).replace(/[{}]/g, "").toLowerCase());
+    const keys = [g, eid.toLowerCase()].concat(eqG);
+    const aw = `asset_guid='{${g}}'`;
+    const mw = `asset_equipment_id='${eid.replace(/'/g, "''")}'`
+      + (eqG.length ? ` OR equip_guid IN (${eqG.map(q => `'{${q}}'`).join(",")})` : "");
+    const plan = [[layers.baseline, aw], [layers.bins, aw], [layers.issues, aw], [layers.insp, aw], [layers.maint, mw]];
+    const got = await Promise.all(plan.map(([L, w]) =>
+      L.queryFeatures({where: w, outFields: ["*"], num: 2000}).catch(e => { console.warn("offline save", eid, e); return null; })));
+    if (got[0] === null) continue;   // no item list = not usable offline
+    const t = Date.now();
+    await Promise.all(plan.map(([L], i) => got[i] && offPut("snap", lyrKey(L) + "|" + eid,
+      {url: lyrKey(L), keys, t, rows: got[i].features.map(f => f.attributes)})));
+    savedMap[eid] = t; n++;
+  }
+  try { localStorage.setItem("ar_off_saved", JSON.stringify(savedMap)); } catch(e){}
+  if (!quiet) toast(n ? `Saved for offline: ${n} trailer${n > 1 ? "s" : ""}` : "Couldn't save for offline — try again with signal");
+  return n;
+}
+function showOffNote(x){
+  const el = $("dOff"); if (!el || !x) return;
+  const t = offSaved()[x.attrs.equipment_id];
+  el.innerHTML = `<div class="cd" style="margin-top:8px">${t
+    ? `&#10003; Saved on this phone for no-signal use · ${shortWhen(t)}`
+    : isOff() ? `<span style="color:var(--warn)">Not saved on this phone — open it with signal first.</span>`
+    : "Not saved for no-signal use yet."}${isOff() ? ""
+    : ` <a href="#" id="dOffGo" style="color:var(--deployed);font-weight:600;margin-left:4px">${t ? "Update" : "Save for offline"}</a>`}</div>`;
+  if ($("dOffGo")) $("dOffGo").onclick = async ev => {
+    ev.preventDefault(); $("dOffGo").innerHTML = '<span class="bspin"></span>Saving…';
+    await saveForOffline([x.attrs.equipment_id]); showOffNote(x); };
+}
+function offBar(){
+  const b = $("offBar"); if (!b) return;
+  let txt = "", cls = "";
+  if (window.__offline && OFF.back){ txt = "Signal is back — tap here to sign in and send anything waiting"; cls = "back"; }
+  else if (isOff()) txt = "No signal — showing what's saved on this phone" + (OFF.staleTs ? ` (from ${shortWhen(OFF.staleTs)})` : "");
+  else if (OFF.staleTs && Date.now() - OFF.staleTs > 5 * 60000) txt = `Weak signal — some of this is the saved copy from ${shortWhen(OFF.staleTs)}`;
+  b.textContent = txt; b.className = cls;
+  document.body.classList.toggle("offbar", !!txt);
+}
+$("offBar").onclick = async () => {
+  if (window.__offline && OFF.back){
+    $("offBar").textContent = "Signing in…";
+    // drafts and waiting audits are on the phone, so a sign-in redirect loses nothing
+    try { await esriId.checkSignInStatus(PORTAL + "/sharing"); location.reload(); }
+    catch(e){ esriId.getCredential(PORTAL + "/sharing").then(() => location.reload()).catch(() => offBar()); }
+  } else toast(isOff() ? "Saved trailers open normally. Anything you submit waits on this phone and sends when you have signal."
+                       : "The signal is slow, so some screens show the copy saved on this phone.");
+};
+const portalReachable = () => Promise.race([
+  fetch(PORTAL + "/sharing/rest/info?f=json", {cache: "no-store"}).then(r => r.ok).catch(() => false),
+  new Promise(ok => setTimeout(() => ok(false), 8000))]);
+// "online" only means a radio is up — a dead zone can still show a bar. Say
+// signal is back only after a real request gets through (on the event, and
+// every 30 s while the app is running from the phone).
+async function probeBack(){
+  if (!window.__offline || OFF.back || navigator.onLine === false) return offBar();
+  if (await portalReachable()){ OFF.back = true; toast("Signal is back — tap the blue strip at the top to sign in and send"); }
+  offBar();
+}
+window.addEventListener("offline", () => { OFF.back = false; offBar(); });
+window.addEventListener("online", probeBack);
+setInterval(probeBack, 30000);
+
 async function qAll(lyr, outFields, geom){
   const fs = await lyr.queryFeatures({where:"1=1", outFields:[outFields||"*"], returnGeometry:!!geom, num:2000});
   return fs.features;
@@ -589,8 +812,25 @@ async function qAll(lyr, outFields, geom){
 
 async function boot(force){
   if (NAVTEST && !force) return;
+  let cred;
+  const reach = navigator.onLine !== false && await portalReachable();
+  if (!reach){
+    // no signal: open from what this phone saved last time (never redirect to sign-in)
+    if (!localStorage.getItem("ar_off_fleet")){
+      $("loadMsg").innerHTML = "No signal, and this phone hasn't saved the fleet yet.<br>Open the app once with signal — it saves itself for next time.";
+      window.addEventListener("online", () => location.reload(), {once: true});
+      return;
+    }
+    window.__offline = true;
+    cred = {userId: localStorage.getItem("ar_user") || "offline"};
+    window.isAdmin = localStorage.getItem("ar_admin") === "1";
+    window.__userName = localStorage.getItem("ar_fullname") || cred.userId;
+    $("who").textContent = cred.userId + " · offline";
+    $("loadMsg").textContent = "No signal — opening what's saved on this phone…";
+    offBar();
+  } else {
   await esriId.checkSignInStatus(PORTAL + "/sharing").catch(() => esriId.getCredential(PORTAL + "/sharing"));
-  const cred = await esriId.getCredential(PORTAL + "/sharing");
+  cred = await esriId.getCredential(PORTAL + "/sharing");
   $("who").textContent = cred.userId;
   // admin mode: AGOL org admins + named users get full data editing in-app
   window.isAdmin = false;
@@ -601,6 +841,9 @@ async function boot(force){
     window.__userName = (self && self.fullName) || cred.userId;   // inspector-name autofill
   } catch(e){ console.warn("admin check failed", e); }
   if (window.isAdmin) $("who").textContent = cred.userId + " · admin";
+  try { localStorage.setItem("ar_user", cred.userId); localStorage.setItem("ar_admin", window.isAdmin ? "1" : "0");
+        localStorage.setItem("ar_fullname", window.__userName || cred.userId); } catch(e){}
+  }
   $("loadMsg").textContent = "Loading fleet…";
   setTimeout(refreshDrafts, 2500);   // after the list renders
 
@@ -716,6 +959,11 @@ async function boot(force){
   // admins land on the dashboard; inspectors land on their asset list
   setTab(window.viewMode === "inspector" ? "list" : "stats");
   $("loader").style.display = "none";
+  if (!window.__offline){
+    try { localStorage.setItem("ar_off_fleet", String(Date.now())); } catch(e){}
+    setTimeout(() => saveForOffline(activeTrip, true), 4000);   // every trip stop works with no signal
+  }
+  offBar();
 
   // QR / deep link: ?trip=A,B,C loads a trip (printed trip-sheet QR)
   const params = new URLSearchParams(location.search);
@@ -871,6 +1119,10 @@ function select(eid, zoom){
   $("dSub").innerHTML = `${title(a.asset_type)} · ${badge(a.asset_status==="deployed"?"deployed":(x.worst?x.worst.sched_status:"none"))}`;
   $("dReady").innerHTML = readyHtml(x);
   showDraftNote(x);
+  showOffNote(x);
+  // opening a trailer with signal keeps it on the phone for later, quietly
+  if (!isOff() && Date.now() - (offSaved()[eid] || 0) > 30 * 60000)
+    saveForOffline([eid], true).then(n => { if (n && selected === eid) showOffNote(x); });
   const cgroups = {};
   x.clocks.forEach(c => { const g = CLOCK_GROUP(c.sched_type);
     (cgroups[g] = cgroups[g] || []).push(c); });  // x.clocks sorted worst-first
@@ -1148,6 +1400,7 @@ window.__navtest = {
   openOverlay, afterSubmitToGuide,
   // screenshot/QA harness: boot with an externally supplied (already valid)
   // token instead of the redirect flow — grants nothing the caller lacks
+  saveForOffline: ids => saveForOffline(ids),
   bootWithToken: (token, userId) => {
     window.__navlive = true;   // token-booted: render everything for real
     esriId.registerToken({server: PORTAL + "/sharing/rest", token, userId,
@@ -2131,6 +2384,7 @@ async function saveTripServer(){
 function setActiveTrip(ids){
   activeTrip = ids || [];
   localStorage.setItem("ar_trip", JSON.stringify(activeTrip));
+  saveForOffline(activeTrip, true);   // every stop on the trip works with no signal
   syncTripBanner();
   saveTripServer();   // fire-and-forget; localStorage covers a failed write
 }
@@ -2339,6 +2593,7 @@ async function renderGuide(x){
     lbtn("openNativeAudit()"));
   html += `<div class="cd" style="margin:2px 0 8px">Poor signal at the trailer? Keep counting — everything is saved on
     this phone, and if the submit can't get through it waits and sends when you have signal.
+    The app also opens with no signal for any trailer you opened (or put on your trip) while you had signal.
     No phone? Print the <b>Site Visit Prep Sheet</b>, count on paper, and enter it here later with the date you were there.</div>`;
   const nBins = binFs.features.length;
   html += `<div class="cd" style="margin:2px 0 8px">Sealed bins: ${nBins || "none"} —
@@ -2558,6 +2813,7 @@ const withTimeout = (p, ms, what) => Promise.race([p,
   new Promise((_, rej) => setTimeout(() =>
     rej(new Error(what + " timed out — poor signal")), ms))]);
 async function uploadInspPhoto(objectId, file, name){
+  if (window.__offline) throw new Error("Failed to fetch — offline");
   // REST addAttachment on the inspections table (JS API FeatureLayer has no
   // attachment-add; same pattern as the DOT/issue forms)
   const cred = await esriId.getCredential(PORTAL + "/sharing");
@@ -3643,7 +3899,7 @@ window.openNativeAudit = async () => {
     window.addEventListener("online", function onOn(){
       const b = $("audSubmit");
       if (!b || b.dataset.fid !== formId || finished){ window.removeEventListener("online", onOn); return; }
-      if (pendingSend && !b.disabled){ toast("Signal is back — sending the audit"); b.click(); }
+      if (pendingSend && !b.disabled && !window.__offline){ toast("Signal is back — sending the audit"); b.click(); }
     });
     stat(); paperSync();
     // restore this asset's unsaved draft (Manage bins round trip, reload, retry)
@@ -4088,6 +4344,7 @@ async function loadBring(x){
 // ---- Photos: attachments from this asset's inspections + issues, newest first
 async function loadPhotos(x){
   const host = $("dPhotos");
+  if (isOff()){ host.textContent = "Photos show when you have signal."; return; }
   host.textContent = "Loading…";
   try {
     const guid = String(x.attrs.GlobalID).replace(/[{}]/g,"");
@@ -4491,6 +4748,9 @@ function applyViewMode(m){
 $("roleToggle").onclick = () =>
   applyViewMode(window.viewMode === "inspector" ? "admin" : "inspector");
 
+// keep the app itself on the phone (sw.js) so it opens with no signal
+if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost"))
+  navigator.serviceWorker.register("sw.js").catch(e => console.warn("offline app copy unavailable", e));
 boot().catch(e => { console.error(e); $("loadMsg").textContent = "Failed to load: " + (e.message||e); });
 });
 </script>
