@@ -11,15 +11,15 @@
   :root{
     /* BNSF hazmat brand: orange #ee6e01 on warm charcoal (bnsfhazmat.com) */
     --bg:#151310;--surface:#1f1c18;--surface-alt:#2b2926;
-    --accent:#ee6e01;--text:#e5e7eb;--text-dim:#9ca3af;--text-muted:#6b7280;
+    --accent:#ee6e01;--text:#e5e7eb;--text-dim:#b8bec8;--text-muted:#8f96a3;
     --border:#3b372f;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--deployed:#3b82f6;
     --font:-apple-system,system-ui,'Segoe UI',Roboto,sans-serif;
   }
   :root[data-theme="light"]{
     /* same brand orange on warm paper; status colors darkened for light bgs */
     --bg:#f3f1ee;--surface:#ffffff;--surface-alt:#eceae6;
-    --text:#1c1917;--text-dim:#57534e;--text-muted:#8a817a;
-    --border:#d6d1cb;--ok:#15803d;--warn:#b45309;--bad:#dc2626;--deployed:#2563eb;
+    --text:#1c1917;--text-dim:#44403c;--text-muted:#5f5751;
+    --border:#d6d1cb;--ok:#15803d;--warn:#92400e;--bad:#b91c1c;--deployed:#1d4ed8;
   }
   :root[data-theme="light"] header .logochip{border:1px solid var(--border)}
   html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;overflow:hidden}
@@ -159,6 +159,12 @@
   #mapTab{display:none}
   /* native audit table (spreadsheet-style inventory count) */
   .audhead{position:sticky;top:0;background:var(--bg);padding:4px 0 8px;z-index:5;display:grid;gap:6px}
+  .audwho{display:grid;gap:6px;margin-bottom:6px}
+  .audwho input{padding:9px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;width:100%}
+  .audrow .anb{flex:none;width:40px;height:38px;border-radius:8px;border:1px solid var(--border);background:var(--surface-alt);color:var(--text-dim);font-size:16px;cursor:pointer}
+  .taskrow.need{outline:2px solid var(--bad);border-radius:8px}
+  .issResolve{display:inline-block;padding:8px 2px}
+  input[data-brs]{width:24px;height:24px}
   .audhead input{padding:9px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;width:100%}
   .audrow{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--border);flex-wrap:wrap}
   .audrow .adesc{flex:1;min-width:170px;font-size:13.5px}
@@ -171,8 +177,9 @@
   .audrow.binhid{display:none}
   .binrow{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px dashed var(--border);flex-wrap:wrap;font-size:13.5px}
   .binrow .btn{flex:none;padding:8px 12px;font-size:12.5px}
-  .binans.pick[data-ans="intact"]{outline:2px solid var(--ok);color:var(--ok)}
-  .binans.pick[data-ans="broken"]{outline:2px solid var(--bad);color:var(--bad)}
+  .binans{min-height:42px}
+  .binans.pick[data-ans="intact"]{outline:3px solid var(--ok);color:var(--ok);background:color-mix(in srgb, var(--ok) 18%, transparent)}
+  .binans.pick[data-ans="broken"]{outline:3px solid var(--bad);color:var(--bad);background:color-mix(in srgb, var(--bad) 18%, transparent)}
   .binph{font-size:12px;color:var(--text-dim);padding:6px 0;border-bottom:1px dashed var(--border)}
   .binmem{display:none;width:100%;font-size:12.5px;color:var(--text-dim);padding:2px 0 4px 24px}
   .binmem div{padding:2px 0}
@@ -191,6 +198,35 @@
   /* native form controls (details / maintenance / DOT) */
   .nfin{width:100%;padding:9px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin-bottom:6px}
   textarea.nfin{resize:vertical}
+  /* visible labels above form boxes: a filled box keeps saying what it is */
+  .fl{display:block;font-size:12px;color:var(--text-dim);margin:4px 0 2px;font-weight:600}
+  .fl .req{color:var(--bad);font-weight:700}
+  .fl > input,.fl > textarea,.fl > select{margin-top:3px;font-weight:400}
+  /* 390px phones: long values (VIN, addresses) wrap instead of pushing the drawer wide */
+  #detail{overflow-x:hidden}
+  .kv>div,.clock .cn{min-width:0;overflow-wrap:anywhere}
+  #detail .btns{flex-wrap:wrap}
+  #detail .btns .btn{min-width:0}
+  .audrow .anb.dev{border-color:var(--warn);color:var(--warn)}
+  .ready{margin-top:6px;padding:6px 10px;border-radius:8px;font-size:13px;font-weight:700;line-height:1.35}
+  .ready.no{background:color-mix(in srgb,var(--bad) 15%,transparent);color:var(--bad);border:1px solid var(--bad)}
+  .ready.warn{background:color-mix(in srgb,var(--warn) 15%,transparent);color:var(--warn);border:1px solid var(--warn)}
+  .ready.yes{background:color-mix(in srgb,var(--ok) 13%,transparent);color:var(--ok);border:1px solid var(--ok)}
+  .ready.dep{background:color-mix(in srgb,var(--deployed) 13%,transparent);color:var(--deployed);border:1px solid var(--deployed)}
+  .ready .why{display:block;font-weight:500;font-size:12px;margin-top:2px}
+  .inprog{font-size:11px;font-weight:700;color:var(--accent)}
+  .sendbar{margin:4px 8px;padding:8px 10px;border:1.5px solid var(--warn);border-radius:8px;font-size:12.5px;cursor:pointer;background:color-mix(in srgb,var(--warn) 12%,transparent)}
+  .draftnote{margin-top:8px;padding:7px 10px;border:1px solid var(--accent);border-radius:8px;font-size:12.5px}
+  .noresult{padding:12px;font-size:13px;color:var(--text-dim)}
+  .hl{margin-left:4px;font-size:12px;font-weight:600}
+  @media(max-width:760px){.hl{display:none}}
+  @media(min-width:1100px){#detail{width:450px}}
+  #bugModal{position:fixed;inset:0;z-index:97;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:16px}
+  #bugModal.open{display:flex}
+  #bugModal .bm{background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;padding:14px}
+  #bugModal pre{white-space:pre-wrap;word-break:break-word;font-size:11px;color:var(--text-dim);background:var(--surface-alt);padding:8px;border-radius:8px;max-height:150px;overflow:auto;margin:8px 0}
+  .issResolve{flex:none;padding:7px 12px;font-size:12.5px}
+  .issdone{padding:8px 0;font-size:13px;border-bottom:1px dashed var(--border);color:var(--ok)}
   .taskrow{padding:8px 0;border-bottom:1px dashed var(--border)}
   .taskrow .tlab{font-size:13.5px;margin-bottom:5px}
   .taskrow select{padding:7px 10px;background:var(--surface-alt);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px}
@@ -217,10 +253,10 @@
     <span class="logochip"><img src="bnsf-hazmat-logo.png" alt="BNSF Hazmat"></span>
     <h1>Asset Readiness</h1><span class="beta">BETA</span>
     <span class="who" id="who"></span>
-    <button class="wri" id="themeToggle" title="Light / dark mode">&#9788;</button>
-    <button class="wri" id="roleToggle" style="display:none" title="Switch between admin and inspector views">Inspector</button>
-    <button class="wri" id="bugBtn" title="Report a problem to the developers" aria-label="Report a problem">&#9873;</button>
-    <button class="wri" id="wriToggle" title="Show/hide WRI internal tools">WRI</button>
+    <button class="wri" id="themeToggle" title="Light / dark mode">&#9788;<span class="hl">Theme</span></button>
+    <button class="wri" id="roleToggle" style="display:none" title="Switch between admin and inspector views (admins only)">Inspector</button>
+    <button class="wri" id="bugBtn" title="Report a problem to the developers" aria-label="Report a problem">&#9873;<span class="hl">Report a problem</span></button>
+    <button class="wri" id="wriToggle" title="Show/hide WRI internal tools">WRI<span class="hl">tools</span></button>
   </header>
   <div id="main">
     <div id="panel">
@@ -259,7 +295,7 @@
 </nav>
 <div id="detail">
   <div class="hd">
-    <div><h2 id="dTitle"></h2><div id="dSub" style="font-size:12px;color:var(--text-dim);margin-top:3px"></div></div>
+    <div><h2 id="dTitle"></h2><div id="dSub" style="font-size:12px;color:var(--text-dim);margin-top:3px"></div><div id="dReady"></div></div>
     <button class="x" id="dClose">&times;</button>
   </div>
   <div class="btns">
@@ -270,9 +306,12 @@
   <div class="auditbox">
     <div class="abt" id="auditTitle">Trailer Audit</div>
     <div class="btns" id="auditRow1">
-      <button class="btn red" id="btnInsp">DOT Annual</button>
-      <button class="btn red" id="btnCount">Audit</button>
+      <button class="btn red" id="btnInsp">DOT annual inspection</button>
+      <button class="btn red" id="btnCount">Inventory audit</button>
     </div>
+    <div class="cd" id="auditHelp" style="margin-top:6px">Inventory audit: count what's aboard (yearly).
+      DOT annual: road-safety check of the trailer itself.</div>
+    <div id="dDraft"></div>
     <div class="btns" id="auditMaint" style="display:none"></div>
     <div class="btns">
       <button class="btn red" id="btnIssue">Report Issue</button>
@@ -287,10 +326,10 @@
   </div>
   <div class="btns" id="adminRow" style="padding-top:0;display:none">
     <button class="btn gray" id="btnAdmAsset" style="border-color:var(--accent)">Edit asset (admin)</button>
-    <button class="btn gray" id="btnAdmClocks" style="border-color:var(--accent)">Edit clocks</button>
+    <button class="btn gray" id="btnAdmClocks" style="border-color:var(--accent)">Edit due dates</button>
   </div>
-  <div class="sec"><h3>Compliance clocks</h3><div id="dClocks"></div></div>
-  <div class="sec closed" id="secHist"><h3>History</h3><div id="dHist" style="font-size:13px;color:var(--text-dim)">Loading…</div></div>
+  <div class="sec"><h3>Due dates</h3><div id="dClocks"></div></div>
+  <div class="sec" id="secHist"><h3>History</h3><div id="dHist" style="font-size:13px;color:var(--text-dim)">Loading…</div></div>
   <div class="sec"><h3>Identity</h3><div><div class="kv" id="dIdent"></div>
     <a href="#" id="lnkInv">View up-to-date inventory &#8594;</a></div></div>
   <div class="sec"><h3>Photos</h3><div id="dPhotos" style="font-size:13px;color:var(--text-dim)">—</div></div>
@@ -323,11 +362,13 @@ const SEVERITY = {overdue:0, due_soon:1, current:2, suspended:3};
 // The 8 BNSF regions, keyed by hazmat manager (assets.hazmat_manager), west→east
 const REGION_ORDER = ["Justin Piper","James Farner","Jeff Hankins","Peter Killman",
                       "Paul Hester","Derek Lampkin","Mike Sheehan","Travis Hudson"];
+// regions are named for their BNSF hazmat manager — say so (persona 3)
 const REGION_LABEL = {
-  "Justin Piper":"Piper · WA/OR/BC/ID", "James Farner":"Farner · CA/NV/AZ",
-  "Jeff Hankins":"Hankins · NM/CO/UT",  "Peter Killman":"Killman · MT/WY",
-  "Paul Hester":"Hester · ND/MB/MN/WI", "Derek Lampkin":"Lampkin · SD/NE/KS/IA",
-  "Mike Sheehan":"Sheehan · MO/AR/IL/KY/TN/AL", "Travis Hudson":"Hudson · TX/OK/LA/MS",
+  "Justin Piper":"WA/OR/BC/ID · mgr Piper", "James Farner":"CA/NV/AZ · mgr Farner",
+  "Jeff Hankins":"NM/CO/UT · mgr Hankins",  "Peter Killman":"MT/WY · mgr Killman",
+  "Paul Hester":"ND/MB/MN/WI · mgr Hester", "Derek Lampkin":"SD/NE/KS/IA · mgr Lampkin",
+  "Mike Sheehan":"MO/AR/IL/KY/TN/AL · mgr Sheehan", "Travis Hudson":"TX/OK/LA/MS · mgr Hudson",
+  "Test Manager":"WRI test trailer (not a real asset)",
 };
 // Region hues from the BNSF Hazmat Region Map (rev 05.01.26)
 const REGION_COLORS = {
@@ -362,12 +403,38 @@ const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;");
 const TYPE_LABEL = {
   dot_inspection:"DOT Annual", dot_annual:"DOT Annual",
   bit_inspection:"BIT Annual", bit_annual:"BIT Annual",
-  audit_inventory:"Audit Inventory", audit_resolution:"Resolution Visit", hpp_maint:"HPP Maint",
+  audit_inventory:"Inventory Audit", audit_resolution:"Fix Visit", hpp_maint:"Power Pack (HPP) Maint",
+  asset_detail_check:"Trailer Details Check", tire_replacement:"Tire Replacement",
   generator_maint:"Generator Maint", fire_pump_maint:"Fire Pump Maint",
   compressor_maint:"Compressor Maint", equip_id_verify:"Equipment ID Check",
   ics_trailer_maint:"ICS Trailer Maint", hyd_reel_trailer_maint:"Hydraulic Reel Trailer Maint",
 };
 const tlabel = t => TYPE_LABEL[t] || title(t);
+const fmtWhen = ms => ms ? fmtDate(ms) + "<br>" + new Date(ms).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"}) : "—";
+const localISO = d => new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
+// tire replacement: the Tire Replacement due date is the authority (mfg year
+// + 6 disagreed with it on the card — persona 2 + 3)
+const tireDue = x => { const c = (x.clocks || []).find(c => c.sched_type === "tire_replacement" && !c._via);
+  return c ? c.due_date : (x.attrs.tire_replace_due || null); };
+// one deploy-ready verdict per asset (persona 3): an open critical problem
+// overrides any green due date, so the colour can't say "Current" over it
+function readyOf(x){
+  const a = x.attrs;
+  if (a.asset_status === "deployed") return {k:"dep", txt:"Deployed on an incident"};
+  const crit = x.critOpen || [], major = x.majorOpen || [];
+  const od = (x.clocks || []).filter(c => c.sched_status === "overdue")
+    .map(c => tlabel(c.sched_type) + (c._via ? " (" + c._via + ")" : ""));
+  const list = arr => arr.slice(0, 2).map(esc).join("; ") + (arr.length > 2 ? ` · +${arr.length - 2} more` : "");
+  if (crit.length) return {k:"no", txt:"Not ready — critical problem open", why: list(crit)};
+  if (od.length) return {k:"warn", txt:"Overdue — check before deploying", why: list(od)};
+  if (major.length) return {k:"warn", txt:"Ready, with problems to fix", why: list(major)};
+  return {k:"yes", txt:"Ready — nothing overdue, no open critical problems"};
+}
+const colorOf = x => x.attrs.asset_status === "deployed" ? COLORS.deployed
+  : (x.critOpen && x.critOpen.length) ? COLORS.overdue
+  : COLORS[x.worst ? x.worst.sched_status : "none"];
+const readyHtml = x => { const r = readyOf(x);
+  return `<div class="ready ${r.k}">${r.txt}${r.why ? `<span class="why">${r.why}</span>` : ""}</div>`; };
 // display grouping (client 2026-07-21): three compliance lines — DOT, Tire
 // Replacement, and Audit (inventory, ID checks, equipment maintenance, etc.)
 const CLOCK_GROUP = t => (t === "dot_inspection" || t === "bit_inspection") ? "DOT"
@@ -395,6 +462,50 @@ const draftOp = (mode, fn) => new Promise((ok, no) => {
 const draftGet = k => draftOp("readonly", st => st.get(k)).catch(() => null);
 const draftPut = (k, v) => draftOp("readwrite", st => st.put(v, k)).catch(e => console.warn("draft save failed", e));
 const draftDel = k => draftOp("readwrite", st => st.delete(k)).catch(() => {});
+// eid -> {eid, ts, pending}: audits saved on this phone (persona 2: nothing
+// showed an audit was in progress until you were back inside it)
+let draftIndex = new Map();
+async function refreshDrafts(){
+  try {
+    const keys = await draftOp("readonly", st => st.getAllKeys());
+    const vals = await draftOp("readonly", st => st.getAll());
+    const m = new Map();
+    (keys || []).forEach((k, n) => {
+      const v = (vals || [])[n];
+      if (!/^audit:/.test(k) || !v || Date.now() - (v.ts || 0) > DRAFT_TTL) return;
+      const x = byGuid[k.slice(6).toLowerCase()];
+      if (x) m.set(x.attrs.equipment_id, {eid: x.attrs.equipment_id, ts: v.ts, pending: !!v.pending});
+    });
+    draftIndex = m;
+  } catch(e){ draftIndex = new Map(); }
+  if (assets.length) renderList(currentListItems());
+  if (selected && byId[selected]) showDraftNote(byId[selected]);
+}
+const draftTag = eid => { const d = draftIndex.get(eid); if (!d) return "";
+  return ` · <span class="inprog">${d.pending ? "&#8682; waiting to send" : "&#9208; audit in progress"}</span>`; };
+function showDraftNote(x){
+  const el = $("dDraft"); if (!el) return;
+  const d = draftIndex.get(x.attrs.equipment_id);
+  if (!d){ el.innerHTML = ""; return; }
+  const when = new Date(d.ts).toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"});
+  el.innerHTML = `<div class="draftnote">${d.pending
+    ? `&#8682; <b>An audit is saved on this phone, waiting to send</b> (${when}). <a href="#" id="dDraftGo" style="color:var(--deployed);font-weight:700">Send now</a>`
+    : `&#9208; <b>Audit in progress</b> — saved on this phone ${when}. <a href="#" id="dDraftGo" style="color:var(--deployed);font-weight:700">Resume</a>`}</div>`;
+  $("dDraftGo").onclick = ev => { ev.preventDefault(); d.pending ? sendPending(d.eid) : openNativeAudit(); };
+}
+// open the waiting audit (it restores from the phone) and press Send for the inspector
+function sendPending(eid){
+  if (!byId[eid]) return;
+  if (navigator.onLine === false) return toast("Still no signal — it will keep waiting on this phone");
+  select(eid, true);
+  window.__autoSend = eid;
+  openNativeAudit();
+}
+window.addEventListener("online", () => { refreshDrafts().then(() => {
+  const n = [...draftIndex.values()].filter(d => d.pending).length;
+  if (n && !$("overlay").classList.contains("open"))
+    toast(`Signal is back — ${n} audit${n > 1 ? "s" : ""} waiting to send. Tap the orange bar on the list.`);
+}); });
 
 // ---- "Report a problem" (Ben 2026-11-05): a pre-filled email to the
 // developers with what they need to reproduce it. mailto needs no backend;
@@ -410,15 +521,43 @@ console.error = (...args) => { keepErr(args.map(v => v && v.message ? v.message 
 function reportProblem(){
   const x = selected ? byId[selected] : null;
   const where = $("overlay").classList.contains("open") ? $("oTitle").textContent : "main view";
-  const body = ["What happened, and what did you expect?", "", "", "",
-    "---- details for the developers (leave these in) ----",
+  const details = ["---- details for the developers ----",
     "Screen: " + where, "Asset: " + (x ? x.attrs.equipment_id : "none selected"),
     "Signed in as: " + ($("who").textContent || "?"), "View: " + (window.viewMode || "?"),
     "Time: " + new Date().toString(), "Online: " + navigator.onLine, "Device: " + navigator.userAgent,
     "Recent errors:"].concat(recentErrs.length ? recentErrs : ["none"]).join("\n");
-  location.href = "mailto:" + DEV_EMAIL + "?subject="
-    + encodeURIComponent("BNSF Asset Readiness problem" + (x ? " — " + x.attrs.equipment_id : ""))
-    + "&body=" + encodeURIComponent(body);
+  // a panel in the page: on a desktop with no mail app the mailto alone
+  // looked dead from all three buttons (persona 2). Copy always works.
+  let m = $("bugModal");
+  if (!m){ m = document.createElement("div"); m.id = "bugModal"; document.body.appendChild(m); }
+  m.innerHTML = `<div class="bm" role="dialog" aria-label="Report a problem">
+    <b style="font-size:15px">Report a problem with this app</b>
+    <div class="cd" style="margin:4px 0 8px">Say what happened. The details underneath tell the developers which
+      screen and asset you were on — your entries in any open form are not touched.</div>
+    <textarea id="bugText" class="nfin" style="min-height:90px" placeholder="What happened, and what did you expect?"></textarea>
+    <pre id="bugDet">${esc(details)}</pre>
+    <div class="btns" style="padding:4px 0;flex-wrap:wrap">
+      <button class="btn red" id="bugMail">Email it</button>
+      <button class="btn gray" id="bugCopy">Copy</button>
+      <button class="btn gray" id="bugClose">Close</button></div>
+    <div class="cd" id="bugHint">If Email doesn't open anything, tap <b>Copy</b> and paste it into a text or email to ${DEV_EMAIL}.</div></div>`;
+  m.classList.add("open");
+  $("bugText").focus();
+  const full = () => ($("bugText").value.trim() || "(no description)") + "\n\n" + details;
+  const close = () => m.classList.remove("open");
+  $("bugClose").onclick = close;
+  m.onclick = e => { if (e.target === m) close(); };
+  $("bugCopy").onclick = async () => {
+    try { await navigator.clipboard.writeText(full()); toast("Copied — paste it into an email or text to " + DEV_EMAIL); }
+    catch(e){ $("bugDet").textContent = full(); const r = document.createRange(); r.selectNodeContents($("bugDet"));
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast("Selected — copy it with your phone's Copy"); }
+  };
+  $("bugMail").onclick = () => {
+    location.href = "mailto:" + DEV_EMAIL + "?subject="
+      + encodeURIComponent("BNSF Asset Readiness problem" + (x ? " — " + x.attrs.equipment_id : ""))
+      + "&body=" + encodeURIComponent(full());
+    $("bugHint").innerHTML = "Your email app should open with this filled in. Nothing opened? Tap <b>Copy</b> instead.";
+  };
 }
 ["bugBtn","oBug","btnBug"].forEach(id => $(id).onclick = reportProblem);
 
@@ -463,6 +602,7 @@ async function boot(force){
   } catch(e){ console.warn("admin check failed", e); }
   if (window.isAdmin) $("who").textContent = cred.userId + " · admin";
   $("loadMsg").textContent = "Loading fleet…";
+  setTimeout(refreshDrafts, 2500);   // after the list renders
 
   const [aF, sF, eF] = await Promise.all([qAll(layers.assets, "*", true), qAll(layers.sched), qAll(layers.equip)]);
 
@@ -496,7 +636,19 @@ async function boot(force){
     return {attrs:a, geom:f.geometry, clocks, worst, equip, cap,
             color: a.asset_status === "deployed" ? COLORS.deployed : COLORS[worst ? worst.sched_status : "none"]};
   });
-  assets.sort((x,y) => (SEVERITY[x.worst?.sched_status]??9)-(SEVERITY[y.worst?.sched_status]??9)
+  try {
+    const iFs = await layers.issues.queryFeatures({
+      where:"issue_status IN ('open','in_progress') AND issue_severity IN ('critical','major')",
+      outFields:["asset_equipment_id","issue_severity","issue_desc"], num:2000});
+    const byE = {};
+    iFs.features.forEach(f => { const i = f.attributes;
+      const r = byE[i.asset_equipment_id] = byE[i.asset_equipment_id] || {c:[], m:[]};
+      (i.issue_severity === "critical" ? r.c : r.m).push(stripTags(i.issue_desc).slice(0, 90)); });
+    assets.forEach(x => { const r = byE[x.attrs.equipment_id];
+      x.critOpen = r ? r.c : []; x.majorOpen = r ? r.m : []; x.color = colorOf(x); });
+  } catch(e){ console.warn("open problems unavailable", e); }
+  const rank = x => (x.critOpen && x.critOpen.length) ? -1 : (SEVERITY[x.worst?.sched_status] ?? 9);
+  assets.sort((x,y) => rank(x) - rank(y)
                      || (x.worst?.due_date||9e15)-(y.worst?.due_date||9e15));
   byId = Object.fromEntries(assets.map(x => [x.attrs.equipment_id, x]));
   byGuid = Object.fromEntries(assets.map(x =>
@@ -662,7 +814,7 @@ function drawMarkers(items){
   });
 }
 
-function badge(st){ return `<span class="badge" style="background:${COLORS[st]||COLORS.none};color:#0a0c10">${title(st||"no clocks")}</span>`; }
+function badge(st){ return `<span class="badge" style="background:${COLORS[st]||COLORS.none};color:#0a0c10">${st === "none" || !st ? "No due dates" : title(st)}</span>`; }
 
 function renderList(items){
   $("list").innerHTML = items.map(x => {
@@ -670,10 +822,32 @@ function renderList(items){
     const tick = tripMode ? `<span style="font-size:17px;flex:none;color:${tripSel.has(a.equipment_id)?"var(--accent)":"var(--text-muted)"}">${tripSel.has(a.equipment_id)?"☑":"☐"}</span>` : "";
     return `<div class="row ${selected===a.equipment_id?"sel":""}" data-eid="${a.equipment_id}">
       ${tick}<span class="dot" style="background:${x.color}"></span>
-      <div><div class="t">${a.equipment_id}</div><div class="s">${title(a.asset_type)} · ${(a.current_warehouse||a.staging_desc||"").split(" - ").pop()||""}</div></div>
-      <div class="due">${w ? CLOCK_GROUP(w.sched_type)+"<br>"+fmtDate(w.due_date) : "no clocks"}</div>
+      <div><div class="t">${a.equipment_id}</div><div class="s">${title(a.asset_type)} · ${(a.current_warehouse||a.staging_desc||"").split(" - ").pop()||""}${draftTag(a.equipment_id)}</div></div>
+      <div class="due">${x.critOpen && x.critOpen.length ? '<b style="color:var(--bad)">Critical<br>problem</b>'
+        : w ? tlabel(w.sched_type)+"<br>"+fmtDate(w.due_date) : "no due dates"}</div>
     </div>`;
   }).join("");
+  const waiting = [...draftIndex.values()].filter(d => d.pending);
+  if (waiting.length)
+    $("list").insertAdjacentHTML("afterbegin", waiting.map(d => `<div class="sendbar" data-send="${esc(d.eid)}">
+      &#8682; <b>Audit waiting to send — ${esc(d.eid)}</b> (saved on this phone ${new Date(d.ts).toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"})}).
+      <b style="color:var(--deployed)">Send now</b></div>`).join(""));
+  $("list").querySelectorAll("[data-send]").forEach(b => b.onclick = () => sendPending(b.dataset.send));
+  if (!items.length && listFilter){
+    // a region filter hid it — say where it is (persona 3: "0 of 237", no hint)
+    const q = listFilter.toLowerCase();
+    const elsewhere = assets.filter(x => x.cap.includes(q) || (x.attrs.current_warehouse||"").toLowerCase().includes(q)
+      || x.attrs.equipment_id.toLowerCase().includes(q)).slice(0, 5);
+    $("list").innerHTML = `<div class="noresult">Nothing matches "${esc(listFilter)}" with the current filters.${elsewhere.length
+      ? `<br>Found outside them: ${elsewhere.map(x => `<b>${esc(x.attrs.equipment_id)}</b>${x.attrs.hazmat_manager ? " (" + esc(REGION_LABEL[x.attrs.hazmat_manager] || x.attrs.hazmat_manager) + ")" : ""}`).join(", ")}
+         <br><button class="btn gray" id="clrFlt" style="margin-top:8px">Show all regions and filters</button>` : ""}</div>`;
+    if ($("clrFlt")) $("clrFlt").onclick = () => {
+      Object.keys(filterState).forEach(k => { filterState[k] = null;
+        const sel = $("flt_" + k); if (sel){ sel.value = ""; sel.classList.remove("on"); } });
+      extentFilter = false; if ($("fltExtent")) $("fltExtent").classList.remove("on");
+      renderList(currentListItems());
+    };
+  }
   $("list").querySelectorAll(".row").forEach(r => r.onclick = () => {
     if (tripMode){
       const id = r.dataset.eid;
@@ -695,6 +869,8 @@ function select(eid, zoom){
   const a = x.attrs;
   $("dTitle").textContent = a.equipment_id;
   $("dSub").innerHTML = `${title(a.asset_type)} · ${badge(a.asset_status==="deployed"?"deployed":(x.worst?x.worst.sched_status:"none"))}`;
+  $("dReady").innerHTML = readyHtml(x);
+  showDraftNote(x);
   const cgroups = {};
   x.clocks.forEach(c => { const g = CLOCK_GROUP(c.sched_type);
     (cgroups[g] = cgroups[g] || []).push(c); });  // x.clocks sorted worst-first
@@ -702,37 +878,40 @@ function select(eid, zoom){
     ? ["DOT","Tire Replacement","Audit"].filter(g => cgroups[g]).map(g => {
         const w = cgroups[g][0];
         const parts = [];
-        if (g === "Audit")
-          parts.push(`${cgroups[g].length} check${cgroups[g].length>1?"s":""} — inventory, ID, equipment maintenance`);
-        // a group line shows its WORST clock — name the holder so a red line
-        // never reads as "the audit wasn't recorded"
-        if (cgroups[g].length > 1 && (w.sched_status === "overdue" || w.sched_status === "due_soon"))
-          parts.push(`<span style="color:${COLORS[w.sched_status]}">held by ${tlabel(w.sched_type)}${w._via ? " — " + esc(w._via) : ""}</span>`);
-        const sub = parts.length ? `<div class="cd">${parts.join(" · ")}</div>` : "";
+        // the group line shows its WORST clock; list every check under it so
+        // a red line never reads as "the audit wasn't recorded" (Ben 2026-11-06)
+        if (cgroups[g].length > 1)
+          parts.push(cgroups[g].map(c => `<div><span class="dot" style="background:${COLORS[c.sched_status]||COLORS.none};display:inline-block;width:7px;height:7px;margin-right:5px"></span>${
+            tlabel(c.sched_type)}${c._via ? " — " + esc(c._via) : ""}: due ${fmtDate(c.due_date)}</div>`).join(""));
+        const sub = parts.length ? `<div class="cd">${parts.join("")}</div>` : "";
+        // the "Audit" group also holds maintenance — name the clock that sets
+        // the date ("Audit due Nov 1" was really HPP Maint — persona 3)
         return `<div class="clock"><span class="dot" style="background:${COLORS[w.sched_status]||COLORS.none}"></span>
-          <div class="cn">${g}${sub}</div><div class="cd">due ${fmtDate(w.due_date)}</div></div>`;
+          <div class="cn">${g === "Audit" && cgroups[g].some(c => c.sched_type !== "audit_inventory") ? "Audit &amp; maintenance" : g}${sub}</div>
+          <div class="cd" style="text-align:right">${cgroups[g].length > 1 ? "next: " + tlabel(w.sched_type) + "<br>" : ""}due ${fmtDate(w.due_date)}</div></div>`;
       }).join("")
-    : "<div style='color:var(--text-muted);font-size:13px'>No clocks on record</div>";
+    : "<div style='color:var(--text-muted);font-size:13px'>No due dates on record</div>";
   const mgr = a.hazmat_manager, mc = REGION_CONTACT[mgr];
   const regionRow = mgr ? `<span class="dot" style="background:${REGION_COLORS[mgr]||"#666"};display:inline-block;margin-right:5px"></span>${REGION_LABEL[mgr]||mgr}` : null;
   const mgrRow = mc ? `${mgr} · <a href="tel:${mc.cell}" style="color:var(--deployed)">${mc.cell}</a> · <a href="mailto:${mc.email}" style="color:var(--deployed)">email</a>` : null;
   const kv = [["Name",a.asset_name],["Status",title(a.asset_status)],
-    ["Region",regionRow],["Hazmat mgr",mgrRow],["Contractor",a.contractor_name],
+    ["BNSF region",regionRow],["Hazmat mgr",mgrRow],["Contractor",a.contractor_name],
     ["Warehouse",a.current_warehouse],
-    ["Base",a.base_warehouse],["Address",a.staging_desc],["WRI region",a.wri_region],
+    ["Base",a.base_warehouse],["Address",a.staging_desc],["WRI service area",a.wri_region],
     ["VIN",a.vin],["Plate",[a.plate_number,a.plate_state].filter(Boolean).join(" ")],
     ["Ball size",a.hitch_ball_size],
     ["Tires",[a.tire_size, a.tire_load_range ? "LR-" + a.tire_load_range : null,
       a.tire_mfg_year ? "mfg " + a.tire_mfg_year : null,
-      a.tire_mfg_year ? "replace " + (a.tire_mfg_year + 6) : null].filter(Boolean).join(" · ") || a.tire_mfg_year],
+      tireDue(x) ? "replace by " + fmtDate(tireDue(x)) : null].filter(Boolean).join(" · ") || a.tire_mfg_year],
     ["Extinguishers",[a.ext_count, a.ext_size].filter(v => v != null && v !== "").join(" × ")],
     ["Lock code",a.lock_code],["Length",a.asset_length],
     ["Axles / tires",[a.axle_count, a.tire_count].filter(v => v != null).join(" / ")],
     ["Contains",a.cap_tags],
-    ["Boom aboard",a.cap_boom_ft != null ? a.cap_boom_ft + " ft" : null],
-    ["Skimmer EDRC",a.cap_skimmer_edrc ? a.cap_skimmer_edrc + " bbl/day" : null],
+    // 0 ft read as "no boom" on trailers that carry 1000 ft — show only a real figure
+    ["Boom aboard",a.cap_boom_ft ? a.cap_boom_ft + " ft" : null],
+    ["Skimmer capacity (EDRC)",a.cap_skimmer_edrc ? a.cap_skimmer_edrc + " bbl/day" : null],
     ["Storage",a.cap_storage_bbl ? Math.round(a.cap_storage_bbl * 42).toLocaleString() + " gal" : null],
-    ["GPS #",a.gps_tracking_num],["Holman",a.holman_no]];
+    ["GPS tracker #",a.gps_tracking_num],["Holman fleet #",a.holman_no]];
   $("dIdent").innerHTML = kv.filter(p=>p[1]).map(p=>`<div class="k">${p[0]}</div><div>${p[1]}</div>`).join("");
   // Only offer the audits this asset's schedules actually call for (e.g. capping
   // kits get Audit Inventory but never DOT); category is the no-clock fallback
@@ -869,12 +1048,16 @@ function openOverlay(title, opts){
   }
 }
 function closeOverlay(fromPop){
+  setTimeout(refreshDrafts, 300);   // list + card show audits in progress / waiting
   if (!$("overlay").classList.contains("open")) return;
   $("overlay").classList.remove("open");
   guideShowing = false;
   $("oFrame").src = "about:blank";
   $("oBody").innerHTML = "";
   const d = ovDepth; ovDepth = 0;
+  // back on the asset page after a form: show what was just saved
+  const xs = byId[selected];
+  if (xs && !(NAVTEST && !window.__navlive)){ loadBring(xs); loadPhotos(xs); loadHistory(xs); }
   if (!fromPop && d) history.go(-d);
 }
 // depth 2 always means "child of the audit guide" — every stacked opener is a
@@ -929,19 +1112,33 @@ window.addEventListener("message", e => {
 // Every form renders into #oBody; whenever it re-renders, fill empty
 // *Who fields from the last-used value (falling back to the AGOL login's
 // full name) and *Aff fields from the last-used affiliation.
+// The name is the SIGNED-IN person, never the last name typed on this phone:
+// a handed-over phone filed audits under the previous tester (persona 2 + 4).
+// Labels: every placeholder becomes a visible label above its box, so a
+// filled box still says what it is (persona 2: "2020", "24" with no label).
+function labelize(root){
+  root.querySelectorAll("input.nfin[placeholder], textarea.nfin[placeholder], .audwho input[placeholder]").forEach(el => {
+    if (el.closest(".fl") || el.closest(".audadd") || el.style.display === "none") return;
+    const ph = el.getAttribute("placeholder") || "";
+    const req = /\(required\)/.test(ph);
+    const lab = document.createElement("label"); lab.className = "fl";
+    lab.innerHTML = esc(ph.replace(/\s*\(required\)/, "")) + (req ? ' <span class="req">*</span>' : "");
+    el.parentNode.insertBefore(lab, el); lab.appendChild(el);
+    el.removeAttribute("placeholder");
+  });
+}
 new MutationObserver(() => {
   $("oBody").querySelectorAll("input[id]").forEach(el => {
     if (el.value) return;
-    if (/Who$/.test(el.id))
-      el.value = localStorage.getItem("ar_who") || window.__userName || "";
-    else if (/Aff$/.test(el.id))
-      el.value = localStorage.getItem("ar_aff") || "";
+    if (/Who$/.test(el.id)) el.value = window.__userName || "";
+    else if (/Aff$/.test(el.id)) el.value = localStorage.getItem("ar_aff") || "";
   });
+  labelize($("oBody"));
 }).observe($("oBody"), {childList: true});
+try { localStorage.removeItem("ar_who"); } catch(e){}
 document.addEventListener("input", e => {
   const id = e.target && e.target.id;
   if (!id) return;
-  if (/Who$/.test(id) && e.target.value.trim()) localStorage.setItem("ar_who", e.target.value.trim());
   if (/Aff$/.test(id) && e.target.value.trim()) localStorage.setItem("ar_aff", e.target.value.trim());
 });
 
@@ -1183,8 +1380,7 @@ window.openAdminClocks = () => {
       x.clocks.sort((p,q) => (SEVERITY[p.sched_status]??9)-(SEVERITY[q.sched_status]??9)
                           || (p.due_date||9e15)-(q.due_date||9e15));
       x.worst = x.clocks[0];
-      x.color = a.asset_status === "deployed" ? COLORS.deployed
-              : COLORS[x.worst ? x.worst.sched_status : "none"];
+      x.color = colorOf(x);
       toast(ups.length + " clock(s) saved");
       history.back();
       select(a.equipment_id, false);
@@ -1344,10 +1540,10 @@ window.openBinManager = async (from) => {
               ${bn.seal_status === "sealed"
                 ? `sealed ${fmtDate(bn.sealed_date)}${bn.sealed_by ? " by " + esc(bn.sealed_by) : ""}`
                 : "open (not sealed)"}${bn.bin_location ? " · " + esc(bn.bin_location) : ""}</span></div>
+          ${window.isAdmin ? `<button class="btn gray" data-bdel2="${i}" title="Delete bin (admin)" style="margin-right:auto">✕</button>` : ""}
           <button class="btn gray" data-bassign="${i}">Items</button>
-          <button class="btn ${bn.seal_status === "sealed" ? "gray" : "red"}" data-bseal="${i}">
+          <button class="btn ${bn.seal_status === "sealed" ? "gray" : "red"}" data-bseal="${i}" style="margin-left:14px">
             ${bn.seal_status === "sealed" ? "Unseal" : "Seal"}</button>
-          ${window.isAdmin ? `<button class="btn gray" data-bdel2="${i}" title="Delete bin (admin)">✕</button>` : ""}
         </div>`).join("") : `<div class="cd" style="padding:6px 0">No bins yet.</div>`}
       <div class="invcat">New bin</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -1398,6 +1594,12 @@ window.openBinManager = async (from) => {
       const bn = bins[+btn.dataset.bseal];
       const sealing = bn.seal_status !== "sealed";
       if (sealing && !members(bn.bin_code).length) return toast("Add items to the bin before sealing it");
+      // explicit confirm both ways: Seal turns into Unseal in place, so a
+      // gloved double-tap must not undo it (Ben 2026-11-06)
+      const nm = bn.bin_label || bn.bin_code;
+      if (!confirm(sealing
+          ? `Seal "${nm}" with its ${members(bn.bin_code).length} item(s)?\n\nOnly do this once the bin is physically sealed.`
+          : `Mark "${nm}" as OPEN (seal broken or removed)?\n\nThe next audit will count its items one by one.`)) return;
       btn.disabled = true;
       try {
         const attrs = sealing
@@ -1763,7 +1965,8 @@ function scopeOf(x){
 function prepIdentity(a){
   const tires = [a.tire_size, a.tire_load_range ? "LR-" + a.tire_load_range : null,
     a.tire_mfg_year ? "mfg " + a.tire_mfg_year : null,
-    a.tire_mfg_year ? "replace by " + (a.tire_mfg_year + 6) : null].filter(Boolean).join(" · ");
+    a.tire_replace_due ? "replace by " + fmtDate(a.tire_replace_due)
+      : a.tire_mfg_year ? "replace by " + (a.tire_mfg_year + 6) : null].filter(Boolean).join(" · ");
   return `<div class="grid">
     <div><b>Asset:</b> ${esc(a.asset_name)}</div><div><b>Type:</b> ${title(a.asset_type)}</div>
     <div><b>Warehouse:</b> ${esc(a.current_warehouse)}</div><div><b>Address:</b> ${esc(a.staging_desc)}</div>
@@ -1793,7 +1996,8 @@ function prepInvSection(baseFs, bins){
   const binned = {}, loose = [];
   feats.forEach(b => { const bn = b.bin_code && bins[b.bin_code];
     if (bn) (binned[b.bin_code] = binned[b.bin_code] || []).push(b); else loose.push(b); });
-  const itemRow = b => `<tr><td>${esc(b.item_desc)}</td><td>${esc(b.item_code)}</td><td style="text-align:center">${b.expected_qty??""}</td><td class="w"></td><td class="w"></td></tr>`;
+  const itemRow = b => `<tr><td>${esc(b.item_desc)}${b.critical_item === "yes" ? " &#9888;" : ""}</td><td>${esc(b.item_code)}</td><td style="text-align:center">${b.expected_qty??""}${
+    b.critical_item === "yes" && b.replace_qty != null ? `<br><small>min ${b.replace_qty}</small>` : ""}</td><td class="w"></td><td class="w"></td></tr>`;
   let invRows = "";
   Object.keys(binned).forEach(code => {
     const bn = bins[code], mem = binned[code];
@@ -1818,7 +2022,8 @@ function prepInvSection(baseFs, bins){
        ${sealed ? `<p class="note"><b>&#128274; ${sealed} sealed bin(s) aboard</b> — if a bin's seal
        is intact, verify the seal instead of counting its items; count item-by-item only if the
        seal is broken or missing, then re-seal.</p>` : ""}
-       <table><tr><th>Item</th><th>Item #</th><th>Expected</th><th>Counted</th><th>Replace</th></tr>${invRows}</table>`;
+       <p class="note">&#9888; = critical item; below its <b>min</b> the audit fails. "Qty to replace" is filled in on site.</p>
+       <table><tr><th>Item</th><th>Item #</th><th>Expected</th><th>Counted</th><th>Qty to replace</th></tr>${invRows}</table>`;
 }
 const prepInstructions = () => `
   <h2>Inspection instructions</h2>
@@ -2069,8 +2274,9 @@ async function renderGuide(x){
         + ` AND (insp_type <> 'audit_inventory' OR app_version IN ${AUDIT_APPS})`,
       outFields:["GlobalID","insp_date","insp_result","inspector_name","insp_type"],
       orderByFields:["insp_date DESC"], num:20}),
-    layers.issues.queryFeatures({where:`asset_guid='{${aguid}}' AND issue_status IN ('open','in_progress') AND source_type='audit'`,
-      outFields:["issue_severity","issue_desc","parts_needed"], num:200}),
+    // every open issue (field reports too) — "None open" must mean none
+    layers.issues.queryFeatures({where:`asset_guid='{${aguid}}' AND issue_status IN ('open','in_progress')`,
+      outFields:["issue_severity","issue_desc","parts_needed","source_type"], num:200}),
     mWhere ? layers.maint.queryFeatures({where: mWhere,
       outFields:["equip_guid","maint_kind","event_date"], orderByFields:["event_date DESC"], num:100})
       : Promise.resolve({features:[]}),
@@ -2092,7 +2298,10 @@ async function renderGuide(x){
   const crit = issuesList.filter(i => i.issue_severity === "critical");
   const rest = issuesList.filter(i => i.issue_severity !== "critical");
   const itemIssues = issuesList.filter(i => /\[item /.test(i.issue_desc));
-  const tick = ok => `<span style="font-weight:800;font-size:16px;color:${ok?"var(--ok)":"var(--text-muted)"}">${ok?"✓":"○"}</span>`;
+  // ✓ done · ! done today but failed (a red result never shows a green tick) · ○ not yet
+  const tick = ok => ok === "fail"
+    ? `<span style="font-weight:800;font-size:16px;color:var(--bad)">!</span>`
+    : `<span style="font-weight:800;font-size:16px;color:${ok?"var(--ok)":"var(--text-muted)"}">${ok?"✓":"○"}</span>`;
   const step = (ok, label, sub, btn) =>
     `<div class="clock" style="gap:10px">${tick(ok)}<div class="cn">${label}${sub?`<div class="cd">${sub}</div>`:""}</div>${btn||""}</div>`;
   const lbtn = fn => `<button class="btn red" style="flex:none;padding:8px 14px;font-size:12.5px" onclick="${fn}">Open</button>`;
@@ -2100,11 +2309,13 @@ async function renderGuide(x){
   const issRow = (i, color) => `<div class="clock"><span class="dot" style="background:${color};flex:none"></span>
     <div class="cn">${esc(stripTags(i.issue_desc))}</div></div>`;
 
-  let html = `<div style="font-size:12.5px;color:var(--text-dim);margin-bottom:10px">
+  x.critOpen = crit.map(i => stripTags(i.issue_desc).slice(0, 90));
+  x.majorOpen = rest.filter(i => i.issue_severity === "major").map(i => stripTags(i.issue_desc).slice(0, 90));
+  let html = readyHtml(x) + `<div style="font-size:12.5px;color:var(--text-dim);margin:8px 0 10px">
     Work top to bottom. After submitting a form, tap <b>&#8592; Back</b> to return
     here — status refreshes automatically.</div>`;
   html += cat("Step 1 — Asset details");
-  html += step(!!detailsToday, "Confirm trailer ID, location, license, VIN",
+  html += step(!!detailsToday, "Trailer details check — confirm ID, location, plate, VIN",
     lastDetails ? `last confirmed ${fmtDate(lastDetails.insp_date)}` : "never confirmed",
     lbtn("openNativeDetails()"));
   html += cat("Step 2 — Equipment maintenance");
@@ -2118,30 +2329,38 @@ async function renderGuide(x){
     step(amDoneToday.has(k), `${ASSET_MAINT[k].label} — ${esc(a.equipment_id)}`, null,
       lbtn(`openNativeAssetMaint('${k}',true)`))).join("");
   html += eqSteps || `<div class="cd" style="padding:4px 0 8px">No powered equipment linked — go straight to the walk.</div>`;
-  html += cat("Step 3 — Inventory walk");
-  html += step(!!auditToday, "Count against the item table — search, then edit the quantities that differ",
-    latest ? `last audit ${fmtDate(latest.insp_date)} — ${verdictBadge(latest.insp_result)}` : "never audited",
+  html += cat("Step 3 — Count items");
+  const auditFailed = latest && latest.insp_result === "fail";
+  html += step(auditToday ? (auditFailed ? "fail" : true) : false,
+    "Count what's aboard — every item starts at what it should have; change only what differs",
+    (latest ? `last audit ${fmtDate(latest.insp_date)} — ${verdictBadge(latest.insp_result)}` : "never audited")
+      + (auditFailed && crit.length ? `<br><span style="color:var(--bad)">Recorded, not complete: the audit due date moves once the
+         ${crit.length} critical problem(s) below are fixed.</span>` : ""),
     lbtn("openNativeAudit()"));
-  const s123kind = (ASSET_SURVEYS[a.equipment_id]||{}).audit ? "audit" : "count";
-  html += `<div class="cd" style="margin:2px 0 8px">Poor signal at the trailer?
-    <a href="#" onclick="openSurvey('${s123kind}');return false" style="color:var(--deployed)">Use the Survey123 form instead</a>
-    — it can also be downloaded to the Survey123 field app for fully offline use.</div>`;
+  html += `<div class="cd" style="margin:2px 0 8px">Poor signal at the trailer? Keep counting — everything is saved on
+    this phone, and if the submit can't get through it waits and sends when you have signal.
+    No phone? Print the <b>Site Visit Prep Sheet</b>, count on paper, and enter it here later with the date you were there.</div>`;
   const nBins = binFs.features.length;
   html += `<div class="cd" style="margin:2px 0 8px">Sealed bins: ${nBins || "none"} —
     <a href="#" onclick="openBinManager(true);return false" style="color:var(--deployed)">Manage bins</a>
     · ${nBins ? "the walk verifies each seal instead of counting its contents"
               : "seal items into a bin so future audits verify one seal instead of counting"}</div>`;
-  html += cat(`Deficiencies (${issuesList.length} open)`);
+  html += cat(`Open problems (${issuesList.length})`);
+  const late = x.clocks.filter(c => c.sched_status === "overdue")
+    .map(c => tlabel(c.sched_type) + (c._via ? " — " + esc(c._via) : ""));
   if (!issuesList.length){
-    html += `<div class="cd" style="padding:4px 0">${latest
-      ? `None open — <b style="color:var(--ok)">trailer is audit-complete.</b>`
-      : "Run the audit to establish status."}</div>`;
+    html += `<div class="cd" style="padding:4px 0">${!latest ? "None open. Run the audit to establish status."
+      : late.length ? `None open, but still <b style="color:var(--bad)">overdue: ${late.join(", ")}</b>.`
+      : `None open and nothing overdue.`}</div>`;
   } else {
     html += crit.map(i => issRow(i, "var(--bad)")).join("")
           + rest.map(i => issRow(i, "var(--warn)")).join("");
     if (itemIssues.length)   // native resolve table works from any baseline
       html += `<div style="margin-top:10px"><button class="btn red" style="width:100%"
-        onclick="launchResolve()">Resolve deficiencies (${itemIssues.length} item${itemIssues.length>1?"s":""}) &#8594;</button></div>`;
+        onclick="launchResolve()">Record a fix visit (${itemIssues.length} item${itemIssues.length>1?"s":""}) &#8594;</button></div>`;
+    if (issuesList.some(i => i.source_type !== "audit"))
+      html += `<div class="cd" style="margin-top:8px">Reported issues close from the asset page:
+        <b>Notes &amp; what to bring</b> → Resolve.</div>`;
     if (crit.some(i => /\[maint /.test(i.issue_desc)))
       html += `<div class="cd" style="margin-top:8px">Equipment failures clear when that
         unit's maintenance form is re-run with every task passing.</div>`;
@@ -2177,7 +2396,7 @@ window.launchResolveS123 = async () => {
 window.launchResolve = async () => {
   const x = byId[selected]; if (!x) return;
   const a = x.attrs;
-  openOverlay("Resolve Deficiencies — " + a.equipment_id,
+  openOverlay("Fix Visit — " + a.equipment_id,
               {html:"<div style='color:var(--text-dim)'>Loading deficiencies…</div>", stack:true});
   try {
     const aguid = String(a.GlobalID).replace(/[{}]/g,"");
@@ -2211,8 +2430,8 @@ window.launchResolve = async () => {
           <option value="partial">Partially resolved</option>
           <option value="no">Could not resolve</option></select>
         <input type="number" inputmode="decimal" step="any" placeholder="Qty now on hand (required)" style="display:block;margin-top:6px">
-        <input type="text" placeholder="Notes" style="display:block;margin-top:6px"></div>`).join("") +
-      `<button class="btn red" id="nrSubmit" style="width:100%;margin:12px 0">Submit resolutions</button>`;
+        <input type="text" placeholder="What did you do? (required)" style="display:block;margin-top:6px"></div>`).join("") +
+      `<button class="btn red" id="nrSubmit" style="width:100%;margin:12px 0">Submit fix visit</button>`;
     $("nrSubmit").onclick = async () => {
       const who = $("nrWho").value.trim();
       if (!who){ nag($("nrWho")); return toast("Resolved by is required"); }
@@ -2220,6 +2439,8 @@ window.launchResolve = async () => {
       for (const el of rowEls){
         const q = el.querySelector("input[type=number]");
         if (q.value.trim() === ""){ nag(q); return toast("Enter qty now on hand for every item"); }
+        const nt = el.querySelector("input[type=text]");
+        if (nt.value.trim() === ""){ nag(nt); return toast("Say what you did for every item"); }
       }
       $("nrSubmit").disabled = true; $("nrSubmit").textContent = "Submitting…";
       try {
@@ -2267,6 +2488,19 @@ window.openNativeIssue = () => {
      <div style="font-size:12.5px;color:var(--text-dim);margin:4px 0">Photo (optional)</div>
      <input id="niFile" type="file" class="nfin" accept="image/*,.pdf">
      <button class="btn red" id="niSubmit" style="width:100%;margin:10px 0">Submit issue</button>`;
+  const ik = "issue:" + String(a.GlobalID).replace(/[{}]/g,"");
+  const iIds = ["niSev","niDesc","niParts","niWho"];
+  let iDone = false;
+  const iSave = () => { if (iDone || !$("niSubmit")) return;
+    const d = {ts: Date.now()}; iIds.forEach(id => d[id] = $(id).value); draftPut(ik, d); };
+  iIds.forEach(id => { $(id).addEventListener("input", iSave); $(id).addEventListener("change", iSave); });
+  draftGet(ik).then(d => {
+    if (!d || iDone || !$("niSubmit") || Date.now() - (d.ts || 0) > DRAFT_TTL) return;
+    if (!iIds.some(id => id !== "niWho" && d[id])) return;
+    iIds.forEach(id => { if (d[id] != null) $(id).value = d[id]; });
+    $("oBody").insertAdjacentHTML("afterbegin", `<div class="draftbar">Restored what you typed ${new Date(d.ts).toLocaleString([],
+      {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"})}.</div>`);
+  });
   $("niSubmit").onclick = async () => {
     const sev = $("niSev").value, desc = $("niDesc").value.trim(), who = $("niWho").value.trim();
     if (!sev){ nag($("niSev")); return toast("Select a severity"); }
@@ -2290,13 +2524,16 @@ window.openNativeIssue = () => {
             60000, "photo upload");
           if (!(up.addAttachmentResult || {}).success) throw new Error("attach failed");
         } catch(ae){ console.error(ae);
-          toast("Issue saved, but the photo failed — attach via the Survey123 form if needed"); }
+          toast("Issue saved, but the photo didn't upload. Send the photo to the office."); }
       }
+      iDone = true; draftDel(ik);
       openIssues = null;  // stats cache stale
       toast("Issue reported" + (sev === "critical" ? " — CRITICAL" : ""));
       loadBring(x);
       afterSubmitToGuide();
-    } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
+    } catch(e){ console.error(e);
+      toast((navigator.onLine === false ? "No signal — not sent. " : "Submit failed: " + (e.message||e) + ". ")
+        + "What you typed is kept on this phone; submit again when you have signal.");
       $("niSubmit").disabled = false; $("niSubmit").textContent = "Submit issue"; }
   };
 };
@@ -2333,8 +2570,9 @@ async function uploadInspPhoto(objectId, file, name){
   if (!(up.addAttachmentResult || {}).success) throw new Error(JSON.stringify(up.error || up));
 }
 const nag = el => { el.scrollIntoView({block:"center"}); el.focus(); };
-const fallbackLink = fn => `<div class="cd" style="margin-bottom:10px">Poor signal or prefer the form?
-  <a href="#" onclick="${fn};return false" style="color:var(--deployed)">Use the Survey123 version</a></div>`;
+// Survey123 fallback links retired (Cody 2026-11-07): poor signal is handled
+// in-app (drafts on the phone, send later) or on the paper prep sheet
+const fallbackLink = fn => "";
 const nfInput = (id, ph, req) => `<input id="${id}" type="text" class="nfin"
   placeholder="${ph}${req ? " (required)" : ""}">`;
 
@@ -2551,17 +2789,47 @@ window.openNativeDetails = () => {
   };
 };
 
-// hour meter: a reading, or an explicit N/A (no meter / unreadable) —
-// Ben 2026-11-05. hourVal: number, null for N/A, undefined when neither.
+// hour meter: a reading, or an explicit "no reading" WITH a reason (no meter,
+// broken, unreadable) — Ben 2026-11-05/06. hourVal: number, null for no
+// reading, undefined when neither; hourWhy: the reason (required for null).
 const hourField = p => `<div style="display:flex;gap:8px;align-items:center">
   <input id="${p}Hour" type="number" inputmode="decimal" class="nfin" placeholder="Hour meter reading" style="flex:1">
   <label class="cd" style="flex:none;display:flex;gap:5px;align-items:center;margin-bottom:8px">
-    <input type="checkbox" id="${p}HourNA" onchange="document.getElementById('${p}Hour').disabled=this.checked">
-    N/A — no meter</label></div>`;
+    <input type="checkbox" id="${p}HourNA" onchange="document.getElementById('${p}Hour').disabled=this.checked;document.getElementById('${p}HourWhy').style.display=this.checked?'':'none'">
+    Can't read it</label></div>
+  <input id="${p}HourWhy" type="text" class="nfin" maxlength="200" style="display:none"
+    placeholder="Why no reading? (no meter, meter broken, display dead…) — required">`;
 const hourVal = p => {
   if ($(p + "HourNA").checked) return null;
   const v = parseFloat($(p + "Hour").value);
   return isNaN(v) ? undefined : v;
+};
+const hourWhy = p => ($(p + "HourWhy").value || "").trim();
+// task picker: starts blank so every task is a deliberate answer — a default
+// of "Completed" let a one-tap submit record work nobody did (Ben 2026-11-06).
+// Function tests read Passed/Failed (same stored codes).
+const taskSel = t => /\btest\b/i.test(t[0])
+  ? `<select data-tsel="1"><option value="">— choose —</option><option value="completed">Passed</option>
+      <option value="failed">Failed</option><option value="skipped">Not done</option><option value="na">N/A</option></select>`
+  : `<select data-tsel="1"><option value="">— choose —</option><option value="completed">Done</option>
+      <option value="failed">Failed</option><option value="skipped">Not done</option><option value="na">N/A — not due / not fitted</option></select>`;
+// returns an error message, or "" when every visible task is answered and
+// every Failed / Not done has a note; outlines the rows that need attention
+const taskCheck = rows => {
+  rows.forEach(r => r.classList.remove("need"));
+  const blank = rows.filter(r => !r.querySelector("select").value);
+  const why = rows.filter(r => ["failed","skipped"].includes(r.querySelector("select").value)
+                               && !r.querySelector("input").value.trim());
+  const bad = blank.concat(why);
+  bad.forEach(r => r.classList.add("need"));
+  if (bad.length) bad[0].scrollIntoView({block:"center", behavior:"smooth"});
+  return blank.length ? `${blank.length} task(s) still need an answer (outlined in red)`
+       : why.length ? "Say what failed / why it wasn't done on each outlined task" : "";
+};
+const taskTally = rows => {
+  const v = rows.map(r => r.querySelector("select").value);
+  const nf = v.filter(x => x === "failed").length, na = v.filter(Boolean).length;
+  return `${na} of ${v.length} answered` + (nf ? ` · <b style="color:var(--bad)">${nf} failed — will flag CRITICAL</b>` : "");
 };
 
 // ---- native Generator / HPP maintenance (task grid)
@@ -2571,8 +2839,7 @@ window.openNativeMaint = (kind, equipGuid, equipId) => {
   const common = isHpp ? HPP_COMMON : GEN_TASKS;
   const taskRow = (t, i, pfx) => `<div class="taskrow" data-pfx="${pfx}" data-i="${i}">
     <div class="tlab"><b>${esc(t[0])}</b> — <span style="color:var(--text-dim)">${esc(t[1])}</span></div>
-    <select data-tsel="1"><option value="completed">Completed</option><option value="failed">Failed</option>
-      <option value="skipped">Skipped</option><option value="na">N/A</option></select>
+    ${taskSel(t)}
     <input type="text" placeholder="What failed / notes"></div>`;
   $("oBody").innerHTML = fallbackLink(`openMaintS123('${kind}','${String(equipGuid).replace(/[{}]/g,"")}','${equipId.replace(/'/g,"")}')`) +
     nfInput("nmWho","Performed by",1) + nfInput("nmAff","Affiliation / company") +
@@ -2583,7 +2850,7 @@ window.openNativeMaint = (kind, equipGuid, equipId) => {
     common.map((t, i) => taskRow(t, i, "c")).join("") +
     (isHpp ? `<div id="nmKub" style="display:none"><div class="invcat">Kubota engine tasks</div>${HPP_KUBOTA.map((t,i)=>taskRow(t,i,"k")).join("")}</div>
       <div id="nmYan" style="display:none"><div class="invcat">Yanmar engine tasks</div>${HPP_YANMAR.map((t,i)=>taskRow(t,i,"y")).join("")}</div>` : "") +
-    `<div id="nmStat" class="cd" style="margin-top:8px">0 failed</div>
+    `<div id="nmStat" class="cd" style="margin-top:8px">0 answered</div>
      ${nfInput("nmParts","Parts / materials used")}
      <textarea id="nmNotes" class="nfin" placeholder="Overall notes" style="min-height:60px"></textarea>
      <button class="btn red" id="nmSubmit" style="width:100%;margin:10px 0">Submit maintenance</button>`;
@@ -2599,17 +2866,19 @@ window.openNativeMaint = (kind, equipGuid, equipId) => {
     const f = e.target.value === "failed";
     e.target.closest(".taskrow").classList.toggle("failed", f);
     e.target.classList.toggle("failed", f);
-    const n = activePfx().reduce((s, p) => s + rowsFor(p)
-      .filter(r => r.querySelector("select").value === "failed").length, 0);
-    $("nmStat").innerHTML = n ? `<b style="color:var(--bad)">${n} failed — will flag CRITICAL</b>` : "0 failed";
+    e.target.closest(".taskrow").classList.remove("need");
+    $("nmStat").innerHTML = taskTally(activePfx().flatMap(rowsFor));
   };
   $("nmSubmit").onclick = async () => {
     const who = $("nmWho").value.trim();
     if (!who) return toast("Performed by is required");
     if (isHpp && !$("nmEngine").value) return toast("Select the engine type");
     const hrs = hourVal("nm");
-    if (hrs === undefined) return toast("Enter the hour meter reading, or tick N/A");
-    $("nmSubmit").disabled = true; $("nmSubmit").textContent = "Submitting…";
+    if (hrs === undefined) return toast("Enter the hour meter reading, or tick Can't read it");
+    if (hrs === null && !hourWhy("nm")){ $("nmHourWhy").focus(); return toast("Say why there's no hour reading"); }
+    const tErr = taskCheck(activePfx().flatMap(rowsFor));
+    if (tErr) return toast(tErr);
+    $("nmSubmit").disabled = true; $("nmSubmit").innerHTML = '<span class="bspin"></span>Submitting…';
     try {
       const tasks = [];
       activePfx().forEach(p => rowsFor(p).forEach(r => {
@@ -2627,7 +2896,7 @@ window.openNativeMaint = (kind, equipGuid, equipId) => {
         hour_meter: hrs,
         maint_status: nfail ? "completed_issues" : "completed",
         event_notes: ((notes + (parts ? " Parts used: " + parts : "")
-          + (hrs === null ? " Hour meter: N/A." : "")).trim() || null),
+          + (hrs === null ? ` Hour meter: no reading — ${hourWhy("nm")}.` : "")).trim().slice(0,1000) || null),
         app_version: "viewer-maint-v3", source_device: "browser"});
       const pg = "{" + String(ev.globalId).replace(/[{}]/g,"") + "}";
       const code = isHpp ? "HPP" : "GEN";
@@ -2637,7 +2906,7 @@ window.openNativeMaint = (kind, equipGuid, equipId) => {
       const bad = kr.addFeatureResults.filter(r => r.error);
       if (bad.length) throw new Error("task rows failed: " + bad[0].error.message);
       toast(nfail ? `Submitted — ${nfail} FAILED task(s) will flag critical`
-                  : "Maintenance submitted — all tasks passed");
+                  : "Maintenance submitted — no failed tasks");
       afterSubmitToGuide();
     } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
       $("nmSubmit").disabled = false; $("nmSubmit").textContent = "Submit maintenance"; }
@@ -2653,15 +2922,14 @@ window.openNativeAssetMaint = (kind, fromGuide) => {
   openOverlay(`${cfg.label} — ${a.equipment_id}`, {html:"", stack: !!fromGuide});
   const taskRow = (t, i) => `<div class="taskrow" data-i="${i}">
     <div class="tlab"><b>${esc(t[0])}</b> — <span style="color:var(--text-dim)">${esc(t[1])}</span></div>
-    <select data-tsel="1"><option value="completed">Completed</option><option value="failed">Failed</option>
-      <option value="skipped">Skipped</option><option value="na">N/A</option></select>
+    ${taskSel(t)}
     <input type="text" placeholder="What failed / notes"></div>`;
   $("oBody").innerHTML =
     nfInput("amWho","Performed by",1) + nfInput("amAff","Affiliation / company") +
     (cfg.code === "GEN" ? hourField("am") : "") +
     `<div class="invcat">${esc(cfg.label)} tasks</div>` +
     cfg.tasks.map(taskRow).join("") +
-    `<div id="amStat" class="cd" style="margin-top:8px">0 failed</div>
+    `<div id="amStat" class="cd" style="margin-top:8px">0 answered</div>
      ${nfInput("amParts","Parts / materials used")}
      <textarea id="amNotes" class="nfin" placeholder="Overall notes" style="min-height:60px"></textarea>
      <button class="btn red" id="amSubmit" style="width:100%;margin:10px 0">Submit maintenance</button>`;
@@ -2669,15 +2937,18 @@ window.openNativeAssetMaint = (kind, fromGuide) => {
     if (!e.target.dataset.tsel) return;
     const f = e.target.value === "failed";
     e.target.closest(".taskrow").classList.toggle("failed", f);
-    const n = [...$("oBody").querySelectorAll(".taskrow select")].filter(s => s.value === "failed").length;
-    $("amStat").innerHTML = n ? `<b style="color:var(--bad)">${n} failed — will flag CRITICAL</b>` : "0 failed";
+    e.target.closest(".taskrow").classList.remove("need");
+    $("amStat").innerHTML = taskTally([...$("oBody").querySelectorAll(".taskrow")]);
   };
   $("amSubmit").onclick = async () => {
     const who = $("amWho").value.trim();
     if (!who) return toast("Performed by is required");
     const hrs = cfg.code === "GEN" ? hourVal("am") : null;
-    if (hrs === undefined) return toast("Enter the hour meter reading, or tick N/A");
-    $("amSubmit").disabled = true; $("amSubmit").textContent = "Submitting…";
+    if (hrs === undefined) return toast("Enter the hour meter reading, or tick Can't read it");
+    if (cfg.code === "GEN" && hrs === null && !hourWhy("am")){ $("amHourWhy").focus(); return toast("Say why there's no hour reading"); }
+    const tErr = taskCheck([...$("oBody").querySelectorAll(".taskrow")]);
+    if (tErr) return toast(tErr);
+    $("amSubmit").disabled = true; $("amSubmit").innerHTML = '<span class="bspin"></span>Submitting…';
     try {
       const tasks = [...$("oBody").querySelectorAll(".taskrow")].map(r => {
         const t = cfg.tasks[+r.dataset.i];
@@ -2694,7 +2965,7 @@ window.openNativeAssetMaint = (kind, fromGuide) => {
         hour_meter: hrs,
         maint_status: nfail ? "completed_issues" : "completed",
         event_notes: ((notes + (parts ? " Parts used: " + parts : "")
-          + (cfg.code === "GEN" && hrs === null ? " Hour meter: N/A." : "")).trim() || null),
+          + (cfg.code === "GEN" && hrs === null ? ` Hour meter: no reading — ${hourWhy("am")}.` : "")).trim().slice(0,1000) || null),
         app_version: "viewer-maint-v3", source_device: "browser"});
       const pg = "{" + String(ev.globalId).replace(/[{}]/g,"") + "}";
       const kr = await layers.mtasks.applyEdits({addFeatures: tasks.map((t, i) => ({attributes:{
@@ -2703,7 +2974,7 @@ window.openNativeAssetMaint = (kind, fromGuide) => {
       const bad = kr.addFeatureResults.filter(r => r.error);
       if (bad.length) throw new Error("task rows failed: " + bad[0].error.message);
       toast(nfail ? `Submitted — ${nfail} FAILED task(s) will flag critical`
-                  : "Maintenance submitted — all tasks passed");
+                  : "Maintenance submitted — no failed tasks");
       try { await processAssetAudit(x); } catch(pe){ console.warn(pe); }
       afterSubmitToGuide();
     } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
@@ -2788,7 +3059,7 @@ window.openNativeDOT = () => {
 window.openNativeAudit = async () => {
   const x = byId[selected]; if (!x) return;
   const a = x.attrs;
-  openOverlay("Audit Inventory — " + a.equipment_id,
+  openOverlay("Inventory Audit — " + a.equipment_id,
               {html:"<div style='color:var(--text-dim)'>Loading item list…</div>", stack:true});
   try {
     const guid = String(a.GlobalID).replace(/[{}]/g,"");
@@ -2847,11 +3118,14 @@ window.openNativeAudit = async () => {
       const loc = b.baseline_notes ? ` · ${esc(b.baseline_notes)}` : "";
       const inOpen = !bc && b.bin_code && openBinLabel[b.bin_code] !== undefined
         ? ` · in bin <b>${esc(openBinLabel[b.bin_code])}</b> (not sealed)` : "";
+      const rq = b.critical_item === "yes" && b.replace_qty != null
+        ? ` · <span style="color:var(--warn)">critical below ${b.replace_qty}</span>` : "";
       return `${hdr}${ph}<div class="audrow${bc ? " binhid" : ""}" data-sec="${sec}" data-bin="${esc(bc||"")}" data-search="${esc((b.item_desc + " " + (b.item_code||"") + " " + cat).toLowerCase())}">
         <div class="adesc">${esc(b.item_desc)}${b.critical_item === "yes" ? ' <span style="color:var(--warn)">&#9888;</span>' : ""}
-          <span class="asub">${esc(b.item_code||"")}${loc}${inOpen}</span></div>
+          <span class="asub">${esc(b.item_code||"")}${loc}${inOpen}${rq}</span></div>
         <div class="aexp">${exp}${unit}</div>
         <input class="aq" type="number" inputmode="decimal" step="any" value="${exp}" data-i="${i}">
+        <button class="anb" type="button" data-anb="${i}" title="Condition / note" aria-label="Condition or note">&#9998;</button>
         <div class="aextra" id="ax${i}">
           <select id="ac${i}"><option value="good">Good</option><option value="worn">Worn</option>
             <option value="damaged">Damaged</option><option value="expired">Expired</option>
@@ -2872,14 +3146,20 @@ window.openNativeAudit = async () => {
     ];
     const phFiles = {};   // slot -> File ; extras under 'extra' as an array
     $("oBody").innerHTML = `
-      <div class="audhead">
+      <div class="audwho">
         <input id="audWho" type="text" placeholder="Inspector name (required)">
         <input id="audAff" type="text" placeholder="Affiliation / company">
+        <label class="fl" style="margin:0">Date of the audit
+          <span style="font-weight:400">— change only when entering a paper count afterwards</span>
+          <input id="audDate" type="date" class="nfin" style="margin:3px 0 0"></label>
+        <div class="cd" id="audPaper" style="display:none;color:var(--warn)"></div>
+      </div>
+      <div class="audhead">
         <input id="audSearch" type="text" placeholder="Search items…">
-        <div id="audStat" class="cd">0 deviations</div>
+        <div id="audStat" class="cd">0 differences</div>
       </div>
       ${sealedBins.length ? `
-      <div class="invcat binhead">Sealed bins — verify each seal (required)</div>
+      <div class="invcat binhead">Sealed bins — is each zip-tie seal still intact? (required)</div>
       ${sealedBins.map(bn => `
         <div class="binrow" data-search="${esc((String(bn.bin_label||"") + " " + bn.bin_code + " "
               + binMembers[bn.bin_code].map(j => items[j].item_desc).join(" ")).toLowerCase())}">
@@ -2887,7 +3167,7 @@ window.openNativeAudit = async () => {
             <span class="asub">${esc(bn.bin_code)} · ${binMembers[bn.bin_code].length} items ·
               sealed ${fmtDate(bn.sealed_date)}${bn.sealed_by ? " by " + esc(bn.sealed_by) : ""}${bn.bin_location ? " · " + esc(bn.bin_location) : ""}
               · <a href="#" class="binshow" data-bin="${esc(bn.bin_code)}">show items</a></span></div>
-          <button class="btn gray binans" data-bin="${esc(bn.bin_code)}" data-ans="intact">Seal intact</button>
+          <button class="btn gray binans" data-bin="${esc(bn.bin_code)}" data-ans="intact">Seal intact — not opened</button>
           <button class="btn gray binans" data-bin="${esc(bn.bin_code)}" data-ans="broken">Broken / missing</button>
           <label class="cd" id="brs_${esc(bn.bin_code)}" style="display:none;flex:none;align-items:center;gap:4px">
             <input type="checkbox" data-brs="${esc(bn.bin_code)}"> re-sealed after counting</label>
@@ -2895,16 +3175,19 @@ window.openNativeAudit = async () => {
             items[j].critical_item === "yes" ? ' <span style="color:var(--warn)">&#9888;</span>' : ""} —
             <b>${items[j].expected_qty ?? 1}</b>${items[j].item_unit && items[j].item_unit !== "each" ? " " + esc(items[j].item_unit) : ""}</div>`).join("")}</div>
         </div>`).join("")}` : ""}
-      <div class="cd" style="margin:${sealedBins.length ? "4px" : "10px"} 0 6px">&#128274; Found a physical
-        bin to seal, or need to change one? <a href="#" id="audBins" style="color:var(--deployed);font-weight:600">Manage bins</a></div>
+      <div class="cd" style="margin:${sealedBins.length ? "4px" : "10px"} 0 6px">&#128274; Packed a tote you want to
+        zip-tie shut, or need to change one? <a href="#" id="audBins" style="color:var(--deployed);font-weight:600">Manage sealed bins</a></div>
+      <div class="cd" style="margin:0 0 6px">&#9888; = critical item (the response can't run without it).
+        Sealed bin = a zip-tied tote: if the seal is intact you don't count what's inside.
+        Tap &#9998; on a row to add its condition or a note.</div>
       <div style="display:flex;gap:8px;font-size:11px;color:var(--text-muted);padding:4px 0;text-transform:uppercase;letter-spacing:.05em">
-        <div style="flex:1">Contents</div><div style="width:52px;text-align:right">Expect</div><div style="width:72px;text-align:center">Actual</div></div>
+        <div style="flex:1">Contents</div><div style="width:52px;text-align:right">Should have</div><div style="width:72px;text-align:center">Counted</div></div>
       ${rowsHtml}
-      <div class="invcat">Items found that are NOT on the list</div>
+      <div class="invcat">Found something that isn't on the list?</div>
       <div id="audAdds"></div>
       <button class="btn gray" id="audAddBtn" style="width:100%;margin:4px 0 2px">+ Add an item</button>
-      <div class="cd">Added items are recorded on this audit AND join the asset's expected
-      inventory going forward.</div>
+      <div class="cd">Items you add are recorded on this audit and become part of what
+      this trailer should carry from now on.</div>
       <div class="invcat">Photos — all 3 required</div>
       ${phSlots.map(([k, lbl]) => `
         <label class="phslot" id="ph_${k}" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
@@ -2929,6 +3212,21 @@ window.openNativeAudit = async () => {
     // ---- draft: everything typed, picked or photographed is kept on this
     // device per asset until the audit is fully submitted (Ben 2026-11-05)
     const draftKey = "audit:" + guid;
+    const todayISO = localISO(new Date());
+    $("audDate").value = todayISO; $("audDate").max = todayISO;
+    $("audDate").min = localISO(new Date(Date.now() - 90 * 864e5));
+    const paperSync = () => {
+      const past = $("audDate").value && $("audDate").value < todayISO;
+      // a paper count is entered later: photos come from the gallery, not the camera
+      $("oBody").querySelectorAll("input[data-slot]").forEach(f =>
+        past ? f.removeAttribute("capture") : f.setAttribute("capture", "environment"));
+      $("audPaper").style.display = past ? "" : "none";
+      $("audPaper").textContent = past ? `Entering a paper count for ${new Date($("audDate").value + "T12:00").toLocaleDateString()}.`
+        + " The audit is dated that day; pick the photos you took at the trailer." : "";
+    };
+    $("audDate").onchange = () => { paperSync(); saveDraft(); };
+    let pendingSend = false;   // no signal at submit: waits on the phone, sends later
+    const formId = String(Math.random()); $("audSubmit").dataset.fid = formId;
     let sub = {};          // which submit steps already reached the server
     let finished = false;  // set once submitted — stops autosave re-creating the draft
     let saveT = null;
@@ -2946,6 +3244,7 @@ window.openNativeAudit = async () => {
       const brs = {};
       $("oBody").querySelectorAll("[data-brs]").forEach(c => { if (c.checked) brs[c.dataset.brs] = 1; });
       return {ts: Date.now(), asset: a.equipment_id, who: $("audWho").value, aff: $("audAff").value,
+              date: $("audDate").value, pending: pendingSend,
               q, adds, bins: Object.assign({}, binAnswers), brs,
               photos: Object.assign({}, phFiles), saved: Object.assign({}, sub)};
     };
@@ -2961,16 +3260,21 @@ window.openNativeAudit = async () => {
       let nd = 0, nc = 0;
       $("oBody").querySelectorAll(".aq").forEach(inp => {
         const i = +inp.dataset.i, exp = items[i].expected_qty ?? 1, v = parseFloat(inp.value);
-        const dev = !isNaN(v) && v !== exp;
-        document.getElementById("ax" + i).style.display = dev ? "flex" : "none";
-        inp.closest(".audrow").classList.toggle("dev", dev);
+        const row = inp.closest(".audrow"), cond = $("ac" + i).value, note = $("an" + i).value.trim();
+        // a full count in poor shape (worn / expired / damaged) is a deviation too
+        const dev = (!isNaN(v) && v !== exp) || cond !== "good";
+        // Condition/Notes opens only from the pencil (or when it holds something):
+        // auto-opening on a count change pushed the next row under the thumb (persona 2)
+        document.getElementById("ax" + i).style.display = note || cond !== "good" || row.dataset.open ? "flex" : "none";
+        row.classList.toggle("dev", dev);
+        const nb = row.querySelector(".anb"); if (nb) nb.classList.toggle("dev", dev);
         const isCrit = dev && critOf(i) && v < threshOf(i);
         inp.closest(".audrow").classList.toggle("crit", isCrit);
         // sealed-bin members reset to expected when re-hidden, so a binhid row
         // can't be dev — the guard keeps the verdict honest regardless
         if (dev && !inp.closest(".audrow").classList.contains("binhid")){ nd++; if (isCrit) nc++; }
       });
-      $("audStat").innerHTML = `${nd} deviation${nd === 1 ? "" : "s"}${nc ? ` · <b style="color:var(--bad)">${nc} critical</b>` : ""}`;
+      $("audStat").innerHTML = `${nd} difference${nd === 1 ? "" : "s"} from the list${nc ? ` · <b style="color:var(--bad)">${nc} critical shortage${nc === 1 ? "" : "s"}</b>` : ""}`;
       // per-section deviation tallies so a collapsed zone still shows its flags
       const devBySec = {};
       $("oBody").querySelectorAll(".audrow.dev").forEach(r =>
@@ -3047,6 +3351,10 @@ window.openNativeAudit = async () => {
       });
       stat(); syncRows(); phSync(); saveDraft();
     });
+    $("oBody").querySelectorAll("[data-anb]").forEach(b => b.onclick = () => {
+      const row = b.closest(".audrow"); row.dataset.open = "1"; stat();
+      $("ac" + b.dataset.anb).focus();
+    });
     $("oBody").querySelectorAll(".binshow").forEach(l => l.onclick = ev => {
       ev.preventDefault();
       const m = document.getElementById("bm_" + l.dataset.bin), on = m.style.display !== "block";
@@ -3101,7 +3409,7 @@ window.openNativeAudit = async () => {
       phSync();
     };
     $("oBody").oninput = e => {
-      if (e.target.classList.contains("aq")) stat();
+      if (e.target.classList.contains("aq") || /^a[cn]\d/.test(e.target.id)) stat();
       if (e.target.id === "audSearch") syncRows();
       else saveDraft();
     };
@@ -3116,6 +3424,8 @@ window.openNativeAudit = async () => {
     $("audSubmit").onclick = async () => {
       const who = $("audWho").value.trim();
       if (!who){ showErr("Enter the inspector name at the top first."); return $("audWho").focus(); }
+      const dv = $("audDate").value;
+      if (!dv || dv > todayISO){ showErr("Set the date of the audit at the top (today, or the day of a paper count)."); return $("audDate").focus(); }
       if (!phReady()) return showErr("All 3 photos are required.");
       if (!binsReady()) return showErr("Answer the seal question for every sealed bin.");
       const {nd, nc} = stat();
@@ -3125,10 +3435,13 @@ window.openNativeAudit = async () => {
       try {
         const newbies = addedItems();
         const result = nc > 0 ? "fail" : (nd > 0 ? "pass_with_issues" : "pass");
-        const noteBase = `Full audit: ${nd} deviation(s), ${nc} critical.`
+        const paper = dv < todayISO;
+        const noteBase = `Full audit: ${nd} difference(s), ${nc} critical.`
+          + (paper ? ` Entered from a paper count on ${new Date().toLocaleDateString()}.` : "")
           + (newbies.length ? ` ${newbies.length} new item(s) added to inventory.` : "")
           + (sealedBins.length ? ` ${sealedBins.length} sealed bin(s) verified.` : "");
-        if (!sub.ts) sub.ts = Math.floor(Date.now() / 1000) * 1000;   // fixed time = the retry key
+        // fixed time = the retry key; a paper count is dated the day it was done
+        if (!sub.ts) sub.ts = paper ? new Date(dv + "T12:00:00").getTime() : Math.floor(Date.now() / 1000) * 1000;
         if (!sub.inspOid && sub.tried){
           // the last try may have saved before its reply was lost — look first
           const pf = await layers.insp.queryFeatures({where:`asset_guid='{${guid}}' AND insp_type='audit_inventory'`
@@ -3162,14 +3475,15 @@ window.openNativeAudit = async () => {
             // members of an intact bin are attested via the seal, not counted
             if (inp.closest(".audrow").classList.contains("binhid")) return;
             const i = +inp.dataset.i, b = items[i], exp = b.expected_qty ?? 1, v = parseFloat(inp.value);
-            if (isNaN(v) || v === exp) return;
-            const isCrit = critOf(i) && v < threshOf(i);
+            const cond = document.getElementById("ac" + i).value;
             const note = document.getElementById("an" + i).value.trim();
+            if (isNaN(v) || (v === exp && cond === "good" && !note)) return;
+            const isCrit = critOf(i) && v < threshOf(i);
             kids.push({attributes:{parentglobalid: pguid, asset_equipment_id: a.equipment_id,
               item_code: b.item_code, item_desc: b.item_desc, expected_qty: exp,
               counted_qty: v, shortage_qty: exp - v,
-              item_condition: document.getElementById("ac" + i).value,
-              replace_needed: exp - v > 0 ? "yes" : "no",
+              item_condition: cond,
+              replace_needed: exp - v > 0 || ["damaged","expired","missing"].includes(cond) ? "yes" : "no",
               count_notes: (isCrit ? "[CRITICAL] " : "") + note}});
           });
           // items found that aren't on the list: recorded on this audit AND
@@ -3263,17 +3577,34 @@ window.openNativeAudit = async () => {
         await layers.insp.applyEdits({updateFeatures:[{attributes:{OBJECTID: sub.inspOid,
           insp_notes: (noteBase + (failed.length ? ` [photo upload failed: ${failed.join(", ")}]` : "")).slice(0,1000)}}]})
           .catch(e => console.error(e));
+        pendingSend = failed.length > 0;
         if (failed.length) await saveNow();   // photos stay on the phone for the retry
         else { finished = true; clearTimeout(saveT); await draftDel(draftKey); }
+        refreshDrafts();
+        // run the issue/clock rules now so the receipt states what happened
+        try { await processAssetAudit(x); } catch(pe){ console.warn(pe); }
+        const ac = x.clocks.find(c => c.sched_type === "audit_inventory" && !c._via);
+        const moved = ac && g8s(ac.completed_by_guid) === g8s(sub.pguid);
+        const complete = ac ? moved : nc === 0;
         // result screen: stays up until the inspector taps Done
         const formEls = [...$("oBody").children];
         formEls.forEach(c => c.style.display = "none");
         const box = document.createElement("div");
+        // a receipt (persona 2 + 4): reference, time, and complete / not complete + why
         box.innerHTML = `
-          <div class="okbox"><b>&#10003; Audit saved</b> — ${esc(a.equipment_id)}, ${fmtDate(sub.ts)}<br>
-            ${result === "pass" ? "All items present." : `${nd} deviation(s)${nc ? `, <b style="color:var(--bad)">${nc} critical</b>` : ""}. Issues will be opened for anything short or damaged.`}
-            ${newbies.length ? `<br>${newbies.length} new item(s) recorded.` : ""}
-            <br>Photos: ${uploads.length - failed.length} of ${uploads.length} uploaded.</div>
+          <div class="okbox" style="${complete ? "" : "border-color:var(--warn);background:color-mix(in srgb, var(--warn) 12%, transparent)"}">
+            <b style="font-size:16px">${complete ? "&#10003; Audit complete" : "&#10003; Audit saved — not complete yet"}</b><br>
+            ${esc(a.equipment_id)} · ${new Date(sub.ts).toLocaleString([], {month:"short", day:"numeric", year:"numeric", hour:"numeric", minute:"2-digit"})}
+            · reference <b>A-${sub.inspOid}</b>${paper ? " · from a paper count" : ""}<br>
+            ${result === "pass" ? "Everything on the list was there."
+              : `${nd} difference${nd === 1 ? "" : "s"} from the list${nc ? ` (<b style="color:var(--bad)">${nc} critical</b>)` : ""} —
+                 ${nd === 1 ? "1 issue" : nd + " issues"} opened for follow-up.`}
+            ${newbies.length ? `<br>${newbies.length} new item(s) added to this trailer's list.` : ""}
+            ${complete && ac ? `<br>Next inventory audit due <b>${fmtDate(ac.due_date)}</b>.`
+              : !complete ? `<br><b>Why not complete:</b> ${nc ? nc + " critical item(s) short" : "critical problems are still open on this trailer"}.
+                 The audit due date moves once they're replaced and recorded on a fix visit (audit page → Record a fix visit).` : ""}
+            <br>Photos: ${uploads.length - failed.length} of ${uploads.length} uploaded.
+            <div class="cd" style="margin-top:6px">Need proof? Take a screenshot of this screen.</div></div>
           ${failed.length ? `<div class="errbox"><b>${failed.length} photo(s) did not upload</b> (${failed.join(", ")}).
             The audit itself is saved. The photos are kept on this phone, so try again when you have signal.</div>
             <button class="btn red" id="audRetryPh" style="width:100%;margin:6px 0">Try the photos again</button>` : ""}
@@ -3287,22 +3618,42 @@ window.openNativeAudit = async () => {
           $("audSubmit").disabled = false; $("audSubmit").click();   // resumes at the photos
         };
       } catch(e){ console.error(e);
-        const why = navigator.onLine === false ? "This phone has no signal." : esc(e.message || e);
-        showErr(`<b>Not finished — it failed while ${step}.</b> ${why}<br>`
-          + (sub.inspOid ? "The audit record itself is saved. <b>Try again</b> finishes the rest without creating a second audit."
-                         : "Nothing reached the server yet. Tap <b>Try again</b>.")
-          + " Your entries are kept on this phone.");
-        $("audSubmit").disabled = false; $("audSubmit").textContent = "Try again";
+        const offline = navigator.onLine === false
+          || /failed to fetch|network|timed out|load failed|networkerror/i.test(String(e.message || e));
+        if (offline){
+          // no signal: keep it on the phone, marked to send (Cody 2026-11-07)
+          pendingSend = true;
+          showErr(`<b>No signal — your audit is saved on this phone and waiting to send.</b>
+            When you have signal, tap <b>Send now</b> here, or the orange bar at the top of the asset list.
+            If this page is open when signal comes back, it sends by itself.`
+            + (sub.inspOid ? " Part of it already reached the server; sending finishes the rest without a second audit." : ""));
+          $("audSubmit").textContent = "Send now";
+        } else {
+          showErr(`<b>Not finished — it failed while ${step}.</b> ${esc(e.message || e)}<br>`
+            + (sub.inspOid ? "The audit record itself is saved. <b>Try again</b> finishes the rest without creating a second audit."
+                           : "Nothing reached the server yet. Tap <b>Try again</b>.")
+            + " Your entries are kept on this phone.");
+          $("audSubmit").textContent = "Try again";
+        }
+        $("audSubmit").disabled = false;
         $("audErr").scrollIntoView({block:"center"});
-        saveNow();
+        saveNow().then(refreshDrafts);
       }
     };
-    stat();
+    window.addEventListener("online", function onOn(){
+      const b = $("audSubmit");
+      if (!b || b.dataset.fid !== formId || finished){ window.removeEventListener("online", onOn); return; }
+      if (pendingSend && !b.disabled){ toast("Signal is back — sending the audit"); b.click(); }
+    });
+    stat(); paperSync();
     // restore this asset's unsaved draft (Manage bins round trip, reload, retry)
     const dr = await draftGet(draftKey);
     if (dr && Date.now() - (dr.ts || 0) < DRAFT_TTL && $("audSubmit")){
       if (dr.who) $("audWho").value = dr.who;
       if (dr.aff) $("audAff").value = dr.aff;
+      if (dr.date && dr.date <= todayISO) $("audDate").value = dr.date;
+      pendingSend = !!dr.pending;
+      paperSync();
       Object.entries(dr.bins || {}).forEach(([code, ans]) => {
         const b = [...$("oBody").querySelectorAll(".binans")]
           .find(el => el.dataset.bin === code && el.dataset.ans === ans);
@@ -3327,20 +3678,27 @@ window.openNativeAudit = async () => {
       });
       sub = dr.saved || {};
       stat(); syncRows(); phSync();
-      if (sub.inspOid) $("audSubmit").textContent = "Finish submitting";
-      $("oBody").insertAdjacentHTML("afterbegin", `<div class="draftbar" id="audDraftBar">${sub.inspOid
+      if (pendingSend) $("audSubmit").textContent = "Send now";
+      else if (sub.inspOid) $("audSubmit").textContent = "Finish submitting";
+      $("oBody").insertAdjacentHTML("afterbegin", `<div class="draftbar" id="audDraftBar">${pendingSend
+        ? "&#8682; <b>This audit is waiting to send</b> (there was no signal). Tap <b>Send now</b> at the bottom."
+        : sub.inspOid
         ? "This audit is already saved. Tap <b>Finish submitting</b> at the bottom to send what's left."
-        : `Restored your unsaved entries from ${new Date(dr.ts).toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"})}.`}
-        <a href="#" id="audDiscard" style="color:var(--deployed);font-weight:600;margin-left:6px">Start over</a></div>`);
+        : `Your entries from ${new Date(dr.ts).toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"})} are back — carry on.`}
+        <div style="text-align:right;margin-top:4px"><a href="#" id="audDiscard" style="color:var(--text-dim);font-size:12px">Discard my entries</a></div></div>`);
       let armed = false;
       $("audDiscard").onclick = async ev => {
         ev.preventDefault();
-        if (!armed){ armed = true; $("audDiscard").textContent = "Tap again to clear all entries"; return; }
+        if (!armed){ armed = true; $("audDiscard").innerHTML = "<b style='color:var(--bad)'>Tap again to delete everything you entered</b>"; return; }
         finished = true; clearTimeout(saveT);
-        await draftDel(draftKey);
+        await draftDel(draftKey); refreshDrafts();
         openNativeAudit();
       };
-    }
+      if (window.__autoSend === a.equipment_id){   // "Send now" from the list / asset card
+        window.__autoSend = null;
+        setTimeout(() => { const b = $("audSubmit"); if (b && b.dataset.fid === formId && !b.disabled) b.click(); }, 400);
+      }
+    } else if (window.__autoSend === a.equipment_id) window.__autoSend = null;
   } catch(e){ console.error(e); $("oBody").innerHTML = "Failed to load: " + (e.message||e); }
 };
 
@@ -3361,7 +3719,7 @@ async function processAssetAudit(x){
   // 1. audits -> issues
   const audFs = await layers.insp.queryFeatures({
     where:`asset_guid='{${aguid}}' AND insp_type='audit_inventory' AND app_version IN ${AUDIT_APPS}`,
-    outFields:["GlobalID","insp_result","insp_date","inspector_name"],
+    outFields:["GlobalID","insp_result","insp_date","inspector_name","app_version"],
     orderByFields:["insp_date DESC"], num:10});
   for (const f of audFs.features){
     const ins = f.attributes;
@@ -3385,7 +3743,8 @@ async function processAssetAudit(x){
       adds.push({attributes:{asset_guid:a.GlobalID, asset_equipment_id:a.equipment_id,
         issue_status:"open", issue_severity: critFlag ? "critical" : "minor",
         issue_desc: `${critFlag?"[CRITICAL] ":""}${k.item_desc}: counted ${k.counted_qty} of ${k.expected_qty}${note?" — "+note:""} [item ${k.item_code}] ${tag}`.slice(0,1000),
-        parts_needed: `${k.item_desc} x ${k.shortage_qty}`.slice(0,500),
+        parts_needed: ((k.shortage_qty||0) > 0 ? `${k.item_desc} x ${k.shortage_qty}`
+          : `${k.item_desc} (replace — ${k.item_condition})`).slice(0,500),
         reported_by: ins.inspector_name, reported_date: ins.insp_date,
         source_type:"audit", app_version:"viewer-live"}});
     });
@@ -3445,6 +3804,34 @@ async function processAssetAudit(x){
         i.issue_status = "resolved"; return;
       }
   });
+
+  // 3b. a later full audit that found the item OK closes the old shortage.
+  // M1-046 (2026-11-06): the clean Nov 5 audit left Sep 21's K-Pump issue open,
+  // which held the audit clock overdue forever. A viewer-v3 audit saves only
+  // rows that differ, so "no row" = counted as expected (or no longer expected).
+  // Keep in sync with ops/audit_processor.py step 3b.
+  const devRow = k => { const n = String(k.count_notes || "");
+    if (n.startsWith("bin-seal:")) return false;
+    return n.startsWith("[CRITICAL]") || (k.shortage_qty || 0) > 0 || (k.counted_qty || 0) < (k.expected_qty || 0)
+      || !["", "good", "none"].includes(String(k.item_condition || "").toLowerCase()); };
+  const audList = audFs.features.map(f => f.attributes);
+  for (const i of allIss.filter(i => isOpen(i) && /\[item [^\]]+\]/.test(i.issue_desc))){
+    const code = i.issue_desc.match(/\[item ([^\]]+)\]/)[1];
+    const later = audList.filter(au => (au.insp_date || 0) > (i.reported_date || 0))
+      .sort((p, q) => (p.insp_date || 0) - (q.insp_date || 0));
+    for (const au of later){
+      const rows = (await layers.counts.queryFeatures({
+        where:`parentglobalid='{${String(au.GlobalID).replace(/[{}]/g,"")}}' AND item_code='${code.replace(/'/g,"''")}'`,
+        outFields:["expected_qty","counted_qty","shortage_qty","item_condition","count_notes"], num:20}))
+        .features.map(f => f.attributes);
+      if (rows.length ? rows.every(k => !devRow(k)) : au.app_version === "viewer-audit-v3"){
+        closes.push({attributes:{OBJECTID:i.OBJECTID, issue_status:"resolved", resolved_date: au.insp_date,
+          resolved_by: String(au.inspector_name || "").slice(0, 64),
+          resolution_notes: `Counted OK on the ${fmtDate(au.insp_date)} audit`}});
+        i.issue_status = "resolved"; break;
+      }
+    }
+  }
 
   // 4. clean maintenance re-run closes that unit's failure issues
   const lastClean = {};
@@ -3528,8 +3915,7 @@ async function processAssetAudit(x){
     x.clocks.sort((p,q) => (SEVERITY[p.sched_status]??9)-(SEVERITY[q.sched_status]??9)
                         || (p.due_date||9e15)-(q.due_date||9e15));
     x.worst = x.clocks[0];
-    x.color = a.asset_status === "deployed" ? COLORS.deployed
-            : COLORS[x.worst ? x.worst.sched_status : "none"];
+    x.color = colorOf(x);
     drawMarkers(currentListItems());
   }
   if (selected === a.equipment_id) select(a.equipment_id, false);  // refresh detail
@@ -3551,7 +3937,7 @@ async function loadHistory(x){
       const migrated = a.insp_notes && a.insp_notes.includes("(migrated");
       events.push({when:a.insp_date,
                    label:(a.insp_type==="other" && migrated ? a.insp_notes.replace(" (migrated from platform)","") : lbl),
-                   note: !migrated && a.insp_notes ? a.insp_notes : null,
+                   note: !migrated && a.insp_notes ? prettyNote(a.insp_notes) : null,
                    who:a.inspector_name, issues:a.insp_status==="completed_issues", kind:"Inspection"});
     });
     const eqGuids = x.equip.map(e => "'{"+String(e.GlobalID).replace(/[{}]/g,"")+"}'");
@@ -3566,11 +3952,32 @@ async function loadHistory(x){
                      who:a.performed_by, issues:a.maint_status==="completed_issues", kind:"Maintenance"});
       });
     }
+    // asset-level maintenance grids (no equipment unit) + closed issues
+    const [amFs, rsFs] = await Promise.all([
+      layers.maint.queryFeatures({where:`asset_equipment_id='${String(x.attrs.equipment_id).replace(/'/g,"''")}' AND equip_guid IS NULL`,
+        outFields:["equip_id","event_date","performed_by","maint_status"], orderByFields:["event_date DESC"], num:100})
+        .catch(() => ({features:[]})),
+      // every issue: when it was reported AND (if so) when it was resolved —
+      // the trailer's own history missed issues still open (persona 3)
+      layers.issues.queryFeatures({where:`asset_guid='{${guid}}'`,
+        outFields:["issue_desc","issue_status","issue_severity","reported_by","reported_date",
+                   "resolved_by","resolved_date","resolution_notes"], orderByFields:["reported_date DESC"], num:200})
+        .catch(() => ({features:[]})),
+    ]);
+    amFs.features.forEach(f => { const a=f.attributes;
+      events.push({when:a.event_date, label:"Maintenance — " + a.equip_id, who:a.performed_by,
+                   issues:a.maint_status==="completed_issues", kind:"Maintenance"}); });
+    rsFs.features.forEach(f => { const a=f.attributes;
+      events.push({when:a.reported_date, label:(a.issue_severity === "critical" ? "Critical issue reported — " : "Issue reported — ")
+                     + esc(stripTags(a.issue_desc).slice(0,80)), who:a.reported_by, kind:"Issue"});
+      if (a.issue_status === "resolved")
+        events.push({when:a.resolved_date, label:"Issue resolved — " + esc(stripTags(a.issue_desc).slice(0,80)),
+                     note:a.resolution_notes, who:a.resolved_by, kind:"Issue"}); });
     events.sort((p,q) => (q.when||0)-(p.when||0));
     host.innerHTML = events.length ? events.slice(0,40).map(e =>
       `<div class="clock"><div class="cn">${e.label}${e.issues?' <span class="badge" style="background:var(--warn);color:#0a0c10">issues</span>':""}
        ${e.note?`<div class="cd">${esc(String(e.note).slice(0,110))}</div>`:""}
-       ${e.who?`<div class="cd">${e.who}</div>`:""}</div><div class="cd">${fmtDate(e.when)}</div></div>`).join("")
+       ${e.who?`<div class="cd">${esc(e.who)}</div>`:""}</div><div class="cd" style="text-align:right;flex:none">${fmtWhen(e.when)}</div></div>`).join("")
       + (events.length>40?`<div class="cd" style="padding-top:6px">…and ${events.length-40} older records</div>`:"")
       : "No history on record";
   } catch(err){ console.error(err); host.textContent = "History unavailable: " + (err.message||err); }
@@ -3578,6 +3985,12 @@ async function loadHistory(x){
 
 // ---- Notes & what to bring: open issues split critical / bring-next-time ----
 const stripTags = d => String(d||"").replace(/\s*\[(item|audit|maint)[^\]]*\]/g,"").replace(/^\[CRITICAL\]\s*/,"");
+// history notes in plain words: field names -> labels, internal tags out
+const prettyNote = n => stripTags(String(n)
+  .replace(/\[updated: ([^\]]+)\]/, (m, list) => "— updated " + list.split(/,\s*/).map(f => {
+    const d = (typeof ADMIN_FIELDS !== "undefined" ? ADMIN_FIELDS : []).find(r => r[0] === f);
+    return d ? d[1] : f.replace(/_/g, " "); }).join(", "))
+  .replace(/deviation\(s\)/g, "difference(s)"));
 async function loadBring(x){
   const host = $("dNotes");
   const notes = x.attrs.asset_notes;
@@ -3592,12 +4005,17 @@ async function loadBring(x){
     const items = fs.features.map(f => f.attributes);
     const crit = items.filter(i => i.issue_severity === "critical");
     const rest = items.filter(i => i.issue_severity !== "critical");
+    x.critOpen = crit.map(i => stripTags(i.issue_desc).slice(0, 90));
+    x.majorOpen = rest.filter(i => i.issue_severity === "major").map(i => stripTags(i.issue_desc).slice(0, 90));
+    const nc0 = colorOf(x);
+    if (nc0 !== x.color){ x.color = nc0; renderList(currentListItems()); }
+    if ($("dReady")) $("dReady").innerHTML = readyHtml(x);
     const hdr = (txt, color) => `<div style="font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:${color};font-weight:800;margin:8px 0 4px">${txt}</div>`;
     const row = (i, color) => `<div class="clock" data-iss="${i.OBJECTID}"><div class="cn">${esc(stripTags(i.issue_desc))}
       ${i.parts_needed ? `<div class="cd"><b style="color:${color}">Bring:</b> ${esc(i.parts_needed)}</div>` : ""}
       <div class="cd">${i.reported_by ? "Reported by " + esc(i.reported_by) + " · " : ""}${fmtDate(i.reported_date)}</div></div>
       <div class="cd" style="text-align:right;flex:none">${title(i.issue_severity)}<br>
-        <a href="#" class="issResolve" data-oid="${i.OBJECTID}" style="color:var(--deployed);font-weight:600">Resolve</a></div></div>`;
+        <button class="btn gray issResolve" data-oid="${i.OBJECTID}" style="margin-top:4px">Resolve…</button></div></div>`;
     let html = notes ? `<div style="margin-bottom:8px">${esc(notes)}</div>` : "";
     if (crit.length)
       html += hdr("Critical — resolve urgently", "var(--bad)") + crit.map(i => row(i, "var(--bad)")).join("");
@@ -3618,7 +4036,8 @@ async function loadBring(x){
         <button class="btn red">Mark resolved</button><button class="btn gray">Cancel</button></div>`);
       const box = document.getElementById("issres_" + oid), inp = box.querySelector("input"),
             ok = box.querySelector(".btn.red");
-      inp.focus();
+      box.scrollIntoView({block:"center", behavior:"smooth"});
+      inp.focus({preventScroll:true});
       box.querySelector(".btn.gray").onclick = () => box.remove();
       ok.onclick = async () => {
         const note = inp.value.trim();
@@ -3631,9 +4050,26 @@ async function loadBring(x){
             resolution_notes: note.slice(0,500)}}]});
           const r0 = (r.updateFeatureResults || [])[0];
           if (!r0 || r0.error) throw new Error(r0 && r0.error ? r0.error.message : "the server did not accept it");
-          toast("Issue resolved");
+          // confirm in place with Undo instead of the row just vanishing (persona 2)
+          const rowEl = l.closest("[data-iss]");
+          const desc = (rowEl.querySelector(".cn").childNodes[0] || {}).textContent || "issue";
+          box.remove();
+          rowEl.outerHTML = `<div class="issdone" id="issdone_${oid}">&#10003; Resolved: ${esc(desc.trim().slice(0, 80))}
+            — <a href="#" style="color:var(--deployed);font-weight:700">Undo</a></div>`;
+          const dn = document.getElementById("issdone_" + oid);
+          let undone = false;
+          dn.querySelector("a").onclick = async ev2 => {
+            ev2.preventDefault(); if (undone) return; undone = true;
+            dn.innerHTML = '<span class="bspin"></span>Undoing…';
+            try {
+              await layers.issues.applyEdits({updateFeatures:[{attributes:{OBJECTID: oid, issue_status: "open",
+                resolved_date: null, resolved_by: null, resolution_notes: null}}]});
+              toast("Undone — the issue is open again");
+            } catch(e3){ console.error(e3); toast("Undo failed: " + (e3.message||e3)); }
+            loadBring(x); loadHistory(x);
+          };
           try { await processAssetAudit(x); } catch(pe){ console.warn(pe); }   // may release the audit clock
-          loadBring(x);
+          setTimeout(() => { if (!undone && document.getElementById("issdone_" + oid)){ loadBring(x); loadHistory(x); } }, 15000);
         } catch(e){ console.error(e); toast("Couldn't resolve: " + (e.message||e));
           ok.disabled = false; ok.textContent = "Mark resolved"; }
       };
@@ -3642,6 +4078,10 @@ async function loadBring(x){
     if (chip) chip.remove();
     if (crit.length) $("dSub").insertAdjacentHTML("beforeend",
       ` <span class="badge" id="dAuditChip" style="background:var(--bad);color:#fff">CRITICAL ITEMS OPEN</span>`);
+    const hn = $("dHoldNote"); if (hn) hn.remove();
+    if (crit.length && x.clocks.some(c => c.sched_type === "audit_inventory"))
+      $("dClocks").insertAdjacentHTML("beforeend", `<div class="cd" id="dHoldNote" style="color:var(--bad);padding:4px 0">
+        The inventory audit due date won't move until the ${crit.length} critical problem(s) above are fixed and resolved.</div>`);
   } catch(e){ console.error(e); }
 }
 
@@ -3707,6 +4147,7 @@ async function loadPhotos(x){
 
 // tabs
 function setTab(t){
+  if (t === "stats") statsRegion = filterState.hazmat_manager || null;
   $("tabList").classList.toggle("active", t==="list");
   $("tabStats").classList.toggle("active", t==="stats");
   $("tabNear").classList.toggle("active", t==="near");
@@ -3806,7 +4247,7 @@ function buildStats(){
     `<div class="tile click${statsDrill===key?" on":""}" data-drill="${key}">
      <div class="tl"><span class="dot" style="background:${color}"></span>${label}</div>
      <div class="tv">${val}</div></div>`;
-  const SEGS = [["overdue","Overdue"],["due_soon","Due ≤ 90 days"],["current","Current"],["none","No clocks"]];
+  const SEGS = [["overdue","Overdue"],["due_soon","Due ≤ 90 days"],["current","Current"],["none","No due dates"]];
   const rows = regionKeys.map(r => {
     const g = regions[r];
     const segs = SEGS.filter(([k]) => g[k] > 0);
@@ -4010,7 +4451,7 @@ $("btnMob").onclick = async () => {
       a.asset_status = "available";
       toast(a.equipment_id + " returned — post-deployment inspection required");
     }
-    x.color = a.asset_status === "deployed" ? COLORS.deployed : COLORS[x.worst ? x.worst.sched_status : "none"];
+    x.color = colorOf(x);
     select(a.equipment_id, false);
   } catch(e){ console.error(e); toast("Edit failed: " + (e.message||e)); }
 };
