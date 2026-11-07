@@ -1,0 +1,16 @@
+{
+  "name": "BNSF Asset Readiness (Beta)",
+  "short_name": "Readiness Beta",
+  "description": "BNSF hazmat trailer audits, due dates and issues — works with no signal.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#151310",
+  "theme_color": "#1f1c18",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

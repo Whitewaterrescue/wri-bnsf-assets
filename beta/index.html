@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>BNSF HAZMAT · Asset Readiness (Beta)</title>
 <link rel="icon" type="image/png" href="favicon.png">
+<!-- installable app (Cody 2026-11-07): home-screen icon, full screen, keeps its offline copy -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#1f1c18">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Readiness">
 <link id="esriTheme" rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/dark/main.css">
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
@@ -28,6 +36,9 @@
     background:var(--warn);color:#111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;position:relative;z-index:46}
   body.offbar #offBar{display:block}
   #offBar.back{background:var(--deployed);color:#fff}
+  .installbar{margin:6px 8px;padding:10px 12px;border:1.5px solid var(--accent);border-radius:10px;font-size:13px;line-height:1.45;background:var(--surface-alt)}
+  .installbar .btns{padding:8px 0 0;gap:8px}
+  .installbar .btn{flex:none;padding:8px 14px;font-size:13px}
   header{display:flex;align-items:center;gap:10px;padding:0 calc(12px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left));background:var(--surface);border-bottom:2px solid var(--accent);min-width:0}
   header h1{font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
   header .logochip{background:#fff;border-radius:6px;padding:3px 7px;display:flex;align-items:center;flex:none}
@@ -275,6 +286,7 @@
       <input id="search" type="text" placeholder="Search ID, name, warehouse, type…" style="display:block">
       <div id="filters"></div>
       <div id="tripActive" style="display:none;margin:0 8px 8px;padding:8px 10px;border:1px solid var(--accent);border-radius:8px;background:var(--surface-alt);font-size:12.5px;align-items:center;gap:8px"></div>
+      <div id="installBar"></div>
       <div id="list" class="active"></div>
       <div id="nearPanel">
         <div class="fld"><input id="nearTerm" type="text" placeholder="Capability: boom, skimmer, generator, SCBA, kit…"></div>
@@ -4748,6 +4760,47 @@ function applyViewMode(m){
 }
 $("roleToggle").onclick = () =>
   applyViewMode(window.viewMode === "inspector" ? "admin" : "inspector");
+
+// ---- installable app (Cody 2026-11-07) -------------------------------------
+// Installed = own home-screen icon, full screen, and (iPhone) Safari stops
+// clearing the saved trailers after ~7 days without a visit. Android installs
+// with one tap; iOS has no install API, so it shows the two taps to do.
+const isInstalled = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent)
+  || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+let installEvt = null;
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; showInstall(); });
+window.addEventListener("appinstalled", () => { installEvt = null; showInstall(); keepStorage();
+  toast("Installed — open Readiness from your home screen"); });
+function showInstall(force){
+  const host = $("installBar"); if (!host) return;
+  let snooze = 0; try { snooze = +localStorage.getItem("ar_install_snooze") || 0; } catch(e){}
+  const can = installEvt || isIOS;
+  if (isInstalled() || !can || (!force && Date.now() < snooze) || window.innerWidth > 900){ host.innerHTML = ""; return; }
+  host.innerHTML = `<div class="installbar"><b>Install Readiness on this phone</b> — its own icon, full screen,
+    and it keeps your saved trailers for no-signal visits.
+    ${installEvt ? "" : `<div style="margin-top:6px">On iPhone: tap <b>Share</b> (the square with the arrow) at the bottom of
+      Safari, then <b>Add to Home Screen</b>. Then open Readiness from the home screen once with signal —
+      the home-screen app keeps its own copy, so open your trailers or trip there.</div>`}
+    <div class="btns">${installEvt ? `<button class="btn red" id="instGo">Install</button>` : ""}
+      <button class="btn gray" id="instLater">Not now</button></div></div>`;
+  if ($("instGo")) $("instGo").onclick = async () => {
+    const ev = installEvt; if (!ev) return;
+    $("instGo").disabled = true; $("instGo").innerHTML = '<span class="bspin"></span>Installing…';
+    ev.prompt(); const r = await ev.userChoice.catch(() => ({}));
+    installEvt = null;
+    if (r.outcome !== "accepted") toast("Not installed — you can install it later from the browser menu");
+    showInstall();
+  };
+  $("instLater").onclick = () => { try { localStorage.setItem("ar_install_snooze", String(Date.now() + 14 * 864e5)); } catch(e){}
+    host.innerHTML = ""; };
+}
+// ask the browser not to clear the saved copy when space runs low
+async function keepStorage(){
+  try { if (navigator.storage && navigator.storage.persist && !(await navigator.storage.persisted()))
+          await navigator.storage.persist(); } catch(e){}
+}
+showInstall(); keepStorage();
 
 // keep the app itself on the phone (sw.js) so it opens with no signal
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost"))

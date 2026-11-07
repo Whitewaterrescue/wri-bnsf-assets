@@ -6,9 +6,10 @@
 //    never changes).
 // Data, sign-in and map tiles are NOT handled here: the page keeps its own data
 // copy in IndexedDB, and edits (POST) never touch this worker.
-const SHELL_CACHE = "ar-shell-v1";
+const SHELL_CACHE = "ar-shell-v2";
 const LIB_CACHE = "ar-arcgis-4.29";
-const SHELL = ["./", "bnsf-hazmat-logo.png", "favicon.png", "instructions.html"];
+const SHELL = ["./", "bnsf-hazmat-logo.png", "favicon.png", "instructions.html", "manifest.webmanifest",
+               "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(SHELL_CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
