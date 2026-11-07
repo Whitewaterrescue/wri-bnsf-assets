@@ -484,6 +484,105 @@ const draftOp = (mode, fn) => new Promise((ok, no) => {
 const draftGet = k => draftOp("readonly", st => st.get(k)).catch(() => null);
 const draftPut = (k, v) => draftOp("readwrite", st => st.put(v, k)).catch(e => console.warn("draft save failed", e));
 const draftDel = k => draftOp("readwrite", st => st.delete(k)).catch(() => {});
+// ---- outbox (Cody 2026-11-07): every form other than the audit (maintenance,
+// DOT, details, Report Issue, fix visit, Resolve) is written to the phone
+// FIRST as a job of plain steps, then sent. No signal = the job waits and
+// sends itself later. Each step records that it reached the server, and an
+// add that may have saved before its reply was lost is looked up (on the
+// server, never the saved copy) before it is tried again — no duplicates.
+//   steps: {op:"add", layer, attrs, lookup}  {op:"children", layer, parent, rows}
+//          {op:"update", layer, attrs}       {op:"attach", lid, parent, file, name}
+const tsSql = ms => "TIMESTAMP '" + new Date(ms).toISOString().slice(0,19).replace("T"," ") + "'";
+const tsWindow = (fld, ts) => `${fld} >= ${tsSql(ts)} AND ${fld} <= ${tsSql(ts + 1000)}`;
+const PENDING_MSG = "No signal — saved on this phone, waiting to send. It sends by itself when signal is back (or tap Send on the orange bar).";
+const netErr = e => navigator.onLine === false || !!window.__offline
+  || /failed to fetch|network|timed? ?out|timeout|load failed|no signal|aborted/i.test(String((e && e.message) || e));
+let outJobs = [];
+async function uploadAtt(lid, objectId, file, name){
+  if (window.__offline) throw new Error("Failed to fetch — offline");
+  const cred = await esriId.getCredential(PORTAL + "/sharing");
+  const fd = new FormData();
+  fd.append("attachment", file, name || file.name || "photo.jpg");
+  fd.append("f", "json"); fd.append("token", cred.token);
+  const up = await withTimeout(
+    fetch(`${SVC}/${lid}/${objectId}/addAttachment`, {method:"POST", body:fd}).then(x => x.json()),
+    60000, "photo upload");
+  if (!(up.addAttachmentResult || {}).success) throw new Error(JSON.stringify(up.error || up));
+}
+async function runJob(job){
+  job.done = job.done || {}; job.out = job.out || {}; job.tried = job.tried || {};
+  for (let i = 0; i < job.steps.length; i++){
+    if (job.done[i]) continue;
+    const st = job.steps[i], L = st.layer ? layers[st.layer] : null;
+    if (st.op === "add"){
+      let res = null;
+      if (job.tried[i] && st.lookup){
+        const f = (await L.__q({where: st.lookup, outFields:["OBJECTID","GlobalID"], num:1})).features[0];
+        if (f) res = {objectId: f.attributes.OBJECTID, globalId: f.attributes.GlobalID};
+      }
+      if (!res){ job.tried[i] = 1; await draftPut("out:" + job.id, job); res = await addRow(L, Object.assign({}, st.attrs)); }
+      job.out[i] = {oid: res.objectId, gid: "{" + String(res.globalId).replace(/[{}]/g, "") + "}"};
+    } else if (st.op === "children"){
+      const pg = job.out[st.parent].gid;
+      if (!(await L.__c({where:`parentglobalid='${pg}'`}))){
+        const kr = await L.applyEdits({addFeatures: st.rows.map(r => ({attributes: Object.assign({parentglobalid: pg}, r)}))});
+        const bad = (kr.addFeatureResults || []).filter(r => r.error);
+        if (bad.length) throw new Error(bad[0].error.message);
+      }
+    } else if (st.op === "update"){
+      const r = await L.applyEdits({updateFeatures:[{attributes: Object.assign({}, st.attrs)}]});
+      const r0 = (r.updateFeatureResults || [])[0];
+      if (!r0 || r0.error) throw new Error(r0 && r0.error ? r0.error.message : "update not accepted");
+    } else if (st.op === "attach"){
+      try { await uploadAtt(st.lid, job.out[st.parent].oid, st.file, st.name); }
+      catch(e){ if (netErr(e)) throw e;   // no signal: keep the job, try later
+        job.warn = "the photo/attachment didn't upload — send it to the office"; }
+    }
+    job.done[i] = 1;
+    await draftPut("out:" + job.id, job);
+  }
+}
+// save the job on the phone, then try to send it now. "sent" | "pending";
+// throws (and forgets the job) only for a real error the server gave back.
+async function submitJob(job){
+  job.id = job.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  await draftPut("out:" + job.id, job);
+  try {
+    if (isOff()) throw new Error("no signal");
+    await runJob(job);
+    await draftDel("out:" + job.id);
+    if (job.warn) toast("Saved, but " + job.warn);
+    refreshDrafts();
+    return "sent";
+  } catch(e){
+    if (netErr(e)){ job.pending = true; await draftPut("out:" + job.id, job); refreshDrafts(); return "pending"; }
+    // the server refused it: nothing will fix that by retrying — drop the job
+    if (!Object.keys(job.done || {}).length) await draftDel("out:" + job.id);
+    throw e;
+  }
+}
+let flushing = false;
+async function flushOutbox(manual){
+  if (flushing) return;
+  if (isOff()){ if (manual) toast(window.__offline && OFF.back ? "Tap the blue strip at the top to sign in first" : "Still no signal — it keeps waiting on this phone"); return; }
+  flushing = true; let sent = 0, left = 0;
+  try {
+    for (const job of outJobs.slice()){
+      try { await runJob(job); await draftDel("out:" + job.id); sent++;
+        if (job.warn) toast("Sent, but " + job.warn);
+        if (byId[job.eid]) processAssetAudit(byId[job.eid]).catch(() => {});
+      } catch(e){ left++; console.warn("outbox", job.what, e);
+        if (!netErr(e)){ job.error = String(e.message || e).slice(0, 200); await draftPut("out:" + job.id, job); } }
+    }
+  } finally { flushing = false; }
+  await refreshDrafts();
+  if (sent) toast(`Sent ${sent} saved form${sent > 1 ? "s" : ""}` + (left ? ` · ${left} still waiting` : ""));
+  else if (manual && left) toast("Couldn't send yet — it keeps waiting on this phone");
+}
+window.addEventListener("online", () => setTimeout(() => { if (outJobs.length) flushOutbox(); }, 2500));
+setInterval(() => { if (outJobs.length && !isOff()) flushOutbox(); }, 60000);
+const outFor = eid => outJobs.filter(j => j.eid === eid);
+
 // eid -> {eid, ts, pending}: audits saved on this phone (persona 2: nothing
 // showed an audit was in progress until you were back inside it)
 let draftIndex = new Map();
@@ -491,29 +590,40 @@ async function refreshDrafts(){
   try {
     const keys = await draftOp("readonly", st => st.getAllKeys());
     const vals = await draftOp("readonly", st => st.getAll());
-    const m = new Map();
+    const m = new Map(), jobs = [];
     (keys || []).forEach((k, n) => {
       const v = (vals || [])[n];
+      if (/^out:/.test(k) && v){ jobs.push(v); return; }   // outbox jobs never expire
       if (!/^audit:/.test(k) || !v || Date.now() - (v.ts || 0) > DRAFT_TTL) return;
       const x = byGuid[k.slice(6).toLowerCase()];
       if (x) m.set(x.attrs.equipment_id, {eid: x.attrs.equipment_id, ts: v.ts, pending: !!v.pending});
     });
     draftIndex = m;
+    outJobs = jobs.sort((p, q) => (p.ts || 0) - (q.ts || 0));
   } catch(e){ draftIndex = new Map(); }
   if (assets.length) renderList(currentListItems());
   if (selected && byId[selected]) showDraftNote(byId[selected]);
 }
 const draftTag = eid => { const d = draftIndex.get(eid);
+  if (!d && outFor(eid).length) return ` · <span class="inprog">&#8682; waiting to send</span>`;
   if (!d) return isOff() && !offSaved()[eid] ? ` · <span style="color:var(--text-muted)">not saved for offline</span>` : "";
   return ` · <span class="inprog">${d.pending ? "&#8682; waiting to send" : "&#9208; audit in progress"}</span>`; };
 function showDraftNote(x){
   const el = $("dDraft"); if (!el) return;
   const d = draftIndex.get(x.attrs.equipment_id);
-  if (!d){ el.innerHTML = ""; return; }
+  const jobs = outFor(x.attrs.equipment_id);
+  const jobHtml = jobs.length ? `<div class="draftnote">&#8682; <b>Waiting to send from this phone:</b>
+    ${jobs.map(j => esc(j.what) + (j.error ? ` <span style="color:var(--bad)">(${esc(j.error)})</span>` : "")).join("; ")}.
+    <a href="#" id="dOutGo" style="color:var(--deployed);font-weight:700">Send now</a></div>` : "";
+  if (!d){ el.innerHTML = jobHtml;
+    if ($("dOutGo")) $("dOutGo").onclick = ev => { ev.preventDefault(); flushOutbox(true); };
+    return; }
   const when = new Date(d.ts).toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"});
   el.innerHTML = `<div class="draftnote">${d.pending
     ? `&#8682; <b>An audit is saved on this phone, waiting to send</b> (${when}). <a href="#" id="dDraftGo" style="color:var(--deployed);font-weight:700">Send now</a>`
     : `&#9208; <b>Audit in progress</b> — saved on this phone ${when}. <a href="#" id="dDraftGo" style="color:var(--deployed);font-weight:700">Resume</a>`}</div>`;
+  el.insertAdjacentHTML("beforeend", jobHtml);
+  if ($("dOutGo")) $("dOutGo").onclick = ev => { ev.preventDefault(); flushOutbox(true); };
   $("dDraftGo").onclick = ev => { ev.preventDefault(); d.pending ? sendPending(d.eid) : openNativeAudit(); };
 }
 // open the waiting audit (it restores from the phone) and press Send for the inspector
@@ -741,6 +851,9 @@ function offlineWrap(lyr){
     }
     return r;
   };
+  // idempotence checks must ask the SERVER: a saved copy can't know about a
+  // record that just went in, and answering from it would add a duplicate
+  lyr.__q = oq; lyr.__c = oc;
   lyr.queryFeatures = p => run(p, false);
   lyr.queryFeatureCount = p => run(p, true);
   // opened offline = no credential: fail fast instead of a sign-in redirect
@@ -977,6 +1090,7 @@ async function boot(force){
   if (!window.__offline){
     try { localStorage.setItem("ar_off_fleet", String(Date.now())); } catch(e){}
     setTimeout(() => saveForOffline(activeTrip, true), 4000);   // every trip stop works with no signal
+    setTimeout(() => refreshDrafts().then(() => { if (outJobs.length) flushOutbox(); }), 3000);
   }
   offBar();
 
@@ -1096,6 +1210,11 @@ function renderList(items){
     $("list").insertAdjacentHTML("afterbegin", waiting.map(d => `<div class="sendbar" data-send="${esc(d.eid)}">
       &#8682; <b>Audit waiting to send — ${esc(d.eid)}</b> (saved on this phone ${new Date(d.ts).toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"})}).
       <b style="color:var(--deployed)">Send now</b></div>`).join(""));
+  if (outJobs.length)
+    $("list").insertAdjacentHTML("afterbegin", `<div class="sendbar" id="outBar">&#8682; <b>${outJobs.length} form${outJobs.length > 1 ? "s" : ""}
+      waiting to send</b> — ${outJobs.slice(0, 3).map(j => esc(j.what)).join("; ")}${outJobs.length > 3 ? "…" : ""}.
+      <b style="color:var(--deployed)">Send now</b></div>`);
+  if ($("outBar")) $("outBar").onclick = () => flushOutbox(true);
   $("list").querySelectorAll("[data-send]").forEach(b => b.onclick = () => sendPending(b.dataset.send));
   if (!items.length && listFilter){
     // a region filter hid it — say where it is (persona 3: "0 of 237", no hint)
@@ -2581,7 +2700,10 @@ async function renderGuide(x){
 
   x.critOpen = crit.map(i => stripTags(i.issue_desc).slice(0, 90));
   x.majorOpen = rest.filter(i => i.issue_severity === "major").map(i => stripTags(i.issue_desc).slice(0, 90));
-  let html = readyHtml(x) + `<div style="font-size:12.5px;color:var(--text-dim);margin:8px 0 10px">
+  const waitingJobs = outFor(a.equipment_id);
+  let html = readyHtml(x) + (waitingJobs.length ? `<div class="draftnote">&#8682; <b>Done here, waiting to send from this phone:</b>
+    ${waitingJobs.map(j => esc(j.what)).join("; ")}. The ticks below update once it's sent.</div>` : "")
+    + `<div style="font-size:12.5px;color:var(--text-dim);margin:8px 0 10px">
     Work top to bottom. After submitting a form, tap <b>&#8592; Back</b> to return
     here — status refreshes automatically.</div>`;
   html += cat("Step 1 — Asset details");
@@ -2715,28 +2837,29 @@ window.launchResolve = async () => {
       }
       $("nrSubmit").disabled = true; $("nrSubmit").textContent = "Submitting…";
       try {
-        const ins = await addRow(layers.insp, {asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
-          insp_type: "audit_resolution", insp_status: "completed", insp_result: "na",
-          insp_date: Date.now(), inspector_name: who,
-          inspector_affiliation: $("nrAff").value.trim() || null,
-          insp_notes: `Resolution visit: ${rows.length} item(s) — ${rows.map(r => r.desc).join(", ")}`.slice(0, 1000),
-          app_version: "viewer-resolve", source_device: "browser"});
-        const pg = "{" + String(ins.globalId).replace(/[{}]/g,"") + "}";
+        const ts = Math.floor(Date.now() / 1000) * 1000;
         const kids = rowEls.map(el => { const r = rows[+el.dataset.i];
           const st = el.querySelector("select").value;
           const v = parseFloat(el.querySelector("input[type=number]").value) || 0;
           const note = el.querySelector("input[type=text]").value.trim();
-          return {attributes:{parentglobalid: pg, asset_equipment_id: a.equipment_id,
+          return {asset_equipment_id: a.equipment_id,
             item_code: r.code, item_desc: r.desc, expected_qty: r.exp, counted_qty: v,
             shortage_qty: r.exp - v, replace_needed: st === "yes" ? "no" : "yes",
             item_condition: st === "yes" ? "good" : "missing",
-            count_notes: ("resolution:" + st + (note ? " " + note : "")).slice(0,500)}};
+            count_notes: ("resolution:" + st + (note ? " " + note : "")).slice(0,500)};
         });
-        const kr = await layers.counts.applyEdits({addFeatures: kids});
-        const bad = kr.addFeatureResults.filter(r => r.error);
-        if (bad.length) throw new Error("rows failed: " + bad[0].error.message);
+        const sent = await submitJob({what: `Fix visit — ${a.equipment_id}`, eid: a.equipment_id, ts, steps: [
+          {op:"add", layer:"insp",
+           lookup:`asset_guid='{${String(a.GlobalID).replace(/[{}]/g,"")}}' AND insp_type='audit_resolution' AND ${tsWindow("insp_date", ts)}`,
+           attrs:{asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
+            insp_type: "audit_resolution", insp_status: "completed", insp_result: "na",
+            insp_date: ts, inspector_name: who,
+            inspector_affiliation: $("nrAff").value.trim() || null,
+            insp_notes: `Resolution visit: ${rows.length} item(s) — ${rows.map(r => r.desc).join(", ")}`.slice(0, 1000),
+            app_version: "viewer-resolve", source_device: "browser"}},
+          {op:"children", layer:"counts", parent:0, rows: kids}]});
         openIssues = null;  // stats cache stale
-        toast("Resolutions submitted");
+        toast(sent === "pending" ? PENDING_MSG : "Fix visit submitted");
         afterSubmitToGuide();  // guide re-renders: closes issues / advances the clock
       } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
         $("nrSubmit").disabled = false; $("nrSubmit").textContent = "Submit resolutions"; }
@@ -2779,27 +2902,20 @@ window.openNativeIssue = () => {
     if (!who){ nag($("niWho")); return toast("Your name is required"); }
     $("niSubmit").disabled = true; $("niSubmit").textContent = "Submitting…";
     try {
-      const r = await addRow(layers.issues, {asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
+      const ts = Math.floor(Date.now() / 1000) * 1000;
+      const f = $("niFile").files[0];
+      const steps = [{op:"add", layer:"issues",
+        lookup:`asset_guid='{${String(a.GlobalID).replace(/[{}]/g,"")}}' AND source_type='field_report' AND ${tsWindow("reported_date", ts)}`,
+        attrs:{asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
         issue_status: "open", issue_severity: sev, issue_desc: desc,
         parts_needed: $("niParts").value.trim() || null, reported_by: who,
-        reported_date: Date.now(), source_type: "field_report",
-        app_version: "viewer-issue", source_device: "browser"});
-      const f = $("niFile").files[0];
-      if (f){
-        try {
-          const cred = await esriId.getCredential(PORTAL + "/sharing");
-          const fd = new FormData();
-          fd.append("attachment", f); fd.append("f", "json"); fd.append("token", cred.token);
-          const up = await withTimeout(
-            fetch(`${SVC}/4/${r.objectId}/addAttachment`, {method:"POST", body:fd}).then(x => x.json()),
-            60000, "photo upload");
-          if (!(up.addAttachmentResult || {}).success) throw new Error("attach failed");
-        } catch(ae){ console.error(ae);
-          toast("Issue saved, but the photo didn't upload. Send the photo to the office."); }
-      }
+        reported_date: ts, source_type: "field_report",
+        app_version: "viewer-issue", source_device: "browser"}}];
+      if (f) steps.push({op:"attach", lid: 4, parent: 0, file: f, name: f.name});
+      const sent = await submitJob({what: `Issue (${sev}) — ${a.equipment_id}`, eid: a.equipment_id, ts, steps});
       iDone = true; draftDel(ik);
       openIssues = null;  // stats cache stale
-      toast("Issue reported" + (sev === "critical" ? " — CRITICAL" : ""));
+      toast(sent === "pending" ? PENDING_MSG : "Issue reported" + (sev === "critical" ? " — CRITICAL" : ""));
       loadBring(x);
       afterSubmitToGuide();
     } catch(e){ console.error(e);
@@ -3040,22 +3156,23 @@ window.openNativeDetails = () => {
       const en = parseInt($("ndExtN").value, 10);
       if (!isNaN(en) && en >= 0) put("ext_count", en);
       put("ext_size", $("ndExtSize").value.trim());
-      if (Object.keys(upd).length){
-        const ur = await layers.assets.applyEdits({updateFeatures:[{attributes:
-          Object.assign({OBJECTID: a.OBJECTID}, upd)}]});
-        const u0 = (ur.updateFeatureResults || [])[0];
-        if (!u0 || u0.error) throw new Error(u0 && u0.error ? u0.error.message : "asset update failed");
-        Object.assign(a, upd);
-      }
-      await addRow(layers.insp, {asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
+      const ts = Math.floor(Date.now() / 1000) * 1000;
+      const steps = [];
+      if (Object.keys(upd).length)
+        steps.push({op:"update", layer:"assets", attrs: Object.assign({OBJECTID: a.OBJECTID}, upd)});
+      steps.push({op:"add", layer:"insp",
+        lookup:`asset_guid='{${String(a.GlobalID).replace(/[{}]/g,"")}}' AND insp_type='asset_detail_check' AND ${tsWindow("insp_date", ts)}`,
+        attrs:{asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
         insp_type: "asset_detail_check", insp_status: "completed",
         insp_result: correct ? "pass" : "pass_with_issues", info_correct: correct ? "yes" : "no",
-        insp_date: Date.now(), inspector_name: who,
+        insp_date: ts, inspector_name: who,
         inspector_affiliation: $("ndAff").value.trim() || null,
         insp_notes: ((correct ? "Details confirmed" : "INFO CORRECTIONS: " + fix)
           + (Object.keys(upd).length ? " [updated: " + Object.keys(upd).join(", ") + "]" : "")).slice(0,1000),
-        app_version: "viewer-details", source_device: "browser"});
-      toast("Details check submitted");
+        app_version: "viewer-details", source_device: "browser"}});
+      const sent = await submitJob({what: `Trailer details check — ${a.equipment_id}`, eid: a.equipment_id, ts, steps});
+      Object.assign(a, upd);   // the card shows the new values now; the server gets them when sent
+      toast(sent === "pending" ? PENDING_MSG : "Details check submitted");
       afterSubmitToGuide();
     } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e)); $("ndSubmit").disabled = false; }
   };
@@ -3161,23 +3278,23 @@ window.openNativeMaint = (kind, equipGuid, equipId) => {
       }));
       const nfail = tasks.filter(t => t.status === "failed").length;
       const parts = $("nmParts").value.trim(), notes = $("nmNotes").value.trim();
-      const ev = await addRow(layers.maint, {
-        equip_guid: "{" + String(equipGuid).replace(/[{}]/g,"") + "}", equip_id: equipId,
-        event_type: "annual", event_date: Date.now(), performed_by: who,
-        performer_affiliation: $("nmAff").value.trim() || null,
-        hour_meter: hrs,
-        maint_status: nfail ? "completed_issues" : "completed",
-        event_notes: ((notes + (parts ? " Parts used: " + parts : "")
-          + (hrs === null ? ` Hour meter: no reading — ${hourWhy("nm")}.` : "")).trim().slice(0,1000) || null),
-        app_version: "viewer-maint-v3", source_device: "browser"});
-      const pg = "{" + String(ev.globalId).replace(/[{}]/g,"") + "}";
+      const ts = Math.floor(Date.now() / 1000) * 1000;
+      const eg = "{" + String(equipGuid).replace(/[{}]/g,"") + "}";
       const code = isHpp ? "HPP" : "GEN";
-      const kr = await layers.mtasks.applyEdits({addFeatures: tasks.map((t, i) => ({attributes:{
-        parentglobalid: pg, task_code: `${code}-${i + 1}`, task_desc: t.desc.slice(0,255),
-        task_status: t.status, task_notes: t.notes || null}}))});
-      const bad = kr.addFeatureResults.filter(r => r.error);
-      if (bad.length) throw new Error("task rows failed: " + bad[0].error.message);
-      toast(nfail ? `Submitted — ${nfail} FAILED task(s) will flag critical`
+      const sent = await submitJob({what: `${SURVEY_TITLES[kind]} — ${equipId}`, eid: selected, ts, steps: [
+        {op:"add", layer:"maint", lookup:`equip_guid='${eg}' AND ${tsWindow("event_date", ts)}`, attrs:{
+          equip_guid: eg, equip_id: equipId,
+          event_type: "annual", event_date: ts, performed_by: who,
+          performer_affiliation: $("nmAff").value.trim() || null,
+          hour_meter: hrs,
+          maint_status: nfail ? "completed_issues" : "completed",
+          event_notes: ((notes + (parts ? " Parts used: " + parts : "")
+            + (hrs === null ? ` Hour meter: no reading — ${hourWhy("nm")}.` : "")).trim().slice(0,1000) || null),
+          app_version: "viewer-maint-v3", source_device: "browser"}},
+        {op:"children", layer:"mtasks", parent:0, rows: tasks.map((t, i) => ({
+          task_code: `${code}-${i + 1}`, task_desc: t.desc.slice(0,255),
+          task_status: t.status, task_notes: t.notes || null}))}]});
+      toast(sent === "pending" ? PENDING_MSG : nfail ? `Submitted — ${nfail} FAILED task(s) will flag critical`
                   : "Maintenance submitted — no failed tasks");
       afterSubmitToGuide();
     } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
@@ -3229,25 +3346,25 @@ window.openNativeAssetMaint = (kind, fromGuide) => {
       });
       const nfail = tasks.filter(t => t.status === "failed").length;
       const parts = $("amParts").value.trim(), notes = $("amNotes").value.trim();
-      const ev = await addRow(layers.maint, {
-        asset_equipment_id: a.equipment_id,        // no equipment unit — the trailer itself
-        equip_id: `${a.equipment_id} ${cfg.label}`, maint_kind: kind,
-        event_type: "annual", event_date: Date.now(), performed_by: who,
-        performer_affiliation: $("amAff").value.trim() || null,
-        hour_meter: hrs,
-        maint_status: nfail ? "completed_issues" : "completed",
-        event_notes: ((notes + (parts ? " Parts used: " + parts : "")
-          + (cfg.code === "GEN" && hrs === null ? ` Hour meter: no reading — ${hourWhy("am")}.` : "")).trim().slice(0,1000) || null),
-        app_version: "viewer-maint-v3", source_device: "browser"});
-      const pg = "{" + String(ev.globalId).replace(/[{}]/g,"") + "}";
-      const kr = await layers.mtasks.applyEdits({addFeatures: tasks.map((t, i) => ({attributes:{
-        parentglobalid: pg, task_code: `${cfg.code}-${i + 1}`, task_desc: t.desc.slice(0,255),
-        task_status: t.status, task_notes: t.notes || null}}))});
-      const bad = kr.addFeatureResults.filter(r => r.error);
-      if (bad.length) throw new Error("task rows failed: " + bad[0].error.message);
-      toast(nfail ? `Submitted — ${nfail} FAILED task(s) will flag critical`
+      const ts = Math.floor(Date.now() / 1000) * 1000;
+      const sent = await submitJob({what: `${cfg.label} — ${a.equipment_id}`, eid: a.equipment_id, ts, steps: [
+        {op:"add", layer:"maint", lookup:`asset_equipment_id='${a.equipment_id.replace(/'/g,"''")}' AND maint_kind='${kind}' AND ${tsWindow("event_date", ts)}`,
+         attrs:{
+          asset_equipment_id: a.equipment_id,        // no equipment unit — the trailer itself
+          equip_id: `${a.equipment_id} ${cfg.label}`, maint_kind: kind,
+          event_type: "annual", event_date: ts, performed_by: who,
+          performer_affiliation: $("amAff").value.trim() || null,
+          hour_meter: hrs,
+          maint_status: nfail ? "completed_issues" : "completed",
+          event_notes: ((notes + (parts ? " Parts used: " + parts : "")
+            + (cfg.code === "GEN" && hrs === null ? ` Hour meter: no reading — ${hourWhy("am")}.` : "")).trim().slice(0,1000) || null),
+          app_version: "viewer-maint-v3", source_device: "browser"}},
+        {op:"children", layer:"mtasks", parent:0, rows: tasks.map((t, i) => ({
+          task_code: `${cfg.code}-${i + 1}`, task_desc: t.desc.slice(0,255),
+          task_status: t.status, task_notes: t.notes || null}))}]});
+      toast(sent === "pending" ? PENDING_MSG : nfail ? `Submitted — ${nfail} FAILED task(s) will flag critical`
                   : "Maintenance submitted — no failed tasks");
-      try { await processAssetAudit(x); } catch(pe){ console.warn(pe); }
+      if (sent === "sent") try { await processAssetAudit(x); } catch(pe){ console.warn(pe); }
       afterSubmitToGuide();
     } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
       $("amSubmit").disabled = false; $("amSubmit").textContent = "Submit maintenance"; }
@@ -3302,22 +3419,13 @@ window.openNativeDOT = () => {
         insp_notes: $("dtNotes").value.trim().slice(0,1000) || null,
         app_version: "viewer-dot-v3", source_device: "browser"};
       $("oBody").querySelectorAll("[data-ci]").forEach(s => attrs[CONDS[+s.dataset.ci][0]] = s.value);
-      const r = await addRow(layers.insp, attrs);
+      const ts = Math.floor(Date.now() / 1000) * 1000; attrs.insp_date = ts;
       const f = $("dtFile").files[0];
-      if (f){
-        $("dtSubmit").textContent = "Uploading attachment…";
-        try {
-          const cred = await esriId.getCredential(PORTAL + "/sharing");
-          const fd = new FormData();
-          fd.append("attachment", f); fd.append("f", "json"); fd.append("token", cred.token);
-          const up = await withTimeout(
-            fetch(`${SVC}/2/${r.objectId}/addAttachment`, {method:"POST", body:fd}).then(x => x.json()),
-            60000, "attachment upload");
-          if (!(up.addAttachmentResult || {}).success) throw new Error(JSON.stringify(up.error || up));
-        } catch(ae){ console.error(ae);
-          toast("Inspection SAVED, but the attachment didn't upload — retry it from better signal (do not resubmit the inspection)"); }
-      }
-      toast("Inspection submitted — " + res.replace(/_/g, " "));
+      const steps = [{op:"add", layer:"insp", attrs,
+        lookup:`asset_guid='{${String(a.GlobalID).replace(/[{}]/g,"")}}' AND insp_type='${attrs.insp_type}' AND ${tsWindow("insp_date", ts)}`}];
+      if (f) steps.push({op:"attach", lid: 2, parent: 0, file: f, name: f.name});
+      const sent = await submitJob({what: `${$("dtType").selectedOptions[0].textContent} — ${a.equipment_id}`, eid: a.equipment_id, ts, steps});
+      toast(sent === "pending" ? PENDING_MSG : "Inspection submitted — " + res.replace(/_/g, " "));
       afterSubmitToGuide();
     } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
       $("dtSubmit").disabled = false; $("dtSubmit").textContent = "Submit inspection"; }
@@ -3716,7 +3824,7 @@ window.openNativeAudit = async () => {
         if (!sub.ts) sub.ts = paper ? new Date(dv + "T12:00:00").getTime() : Math.floor(Date.now() / 1000) * 1000;
         if (!sub.inspOid && sub.tried){
           // the last try may have saved before its reply was lost — look first
-          const pf = await layers.insp.queryFeatures({where:`asset_guid='{${guid}}' AND insp_type='audit_inventory'`
+          const pf = await layers.insp.__q({where:`asset_guid='{${guid}}' AND insp_type='audit_inventory'`
             + ` AND insp_date >= ${ts2sql(sub.ts)} AND insp_date <= ${ts2sql(sub.ts + 1000)}`,
             outFields:["OBJECTID","GlobalID"], num:1});
           const f0 = pf.features[0];
@@ -3783,7 +3891,7 @@ window.openNativeAudit = async () => {
           });
           if (kids.length){
             // a lost reply may have saved them already — never add a second set
-            const have = await layers.counts.queryFeatureCount({where:`parentglobalid='${pguid}'`});
+            const have = await layers.counts.__c({where:`parentglobalid='${pguid}'`});
             if (!have){
               const kr = await layers.counts.applyEdits({addFeatures: kids}, {rollbackOnFailureEnabled: true});
               const bad = (kr.addFeatureResults || []).filter(r => r.error);
@@ -4316,12 +4424,16 @@ async function loadBring(x){
         if (!note) return toast("Say what was done to fix it");
         ok.disabled = true; ok.innerHTML = '<span class="bspin"></span>Saving…';
         try {
-          const r = await layers.issues.applyEdits({updateFeatures:[{attributes:{OBJECTID: oid,
-            issue_status: "resolved", resolved_date: Date.now(),
-            resolved_by: String(window.__userName || $("who").textContent || "").slice(0,64),
-            resolution_notes: note.slice(0,500)}}]});
-          const r0 = (r.updateFeatureResults || [])[0];
-          if (!r0 || r0.error) throw new Error(r0 && r0.error ? r0.error.message : "the server did not accept it");
+          const sentR = await submitJob({what: `Resolve issue — ${x.attrs.equipment_id}`, eid: x.attrs.equipment_id, ts: Date.now(),
+            steps: [{op:"update", layer:"issues", attrs:{OBJECTID: oid,
+              issue_status: "resolved", resolved_date: Date.now(),
+              resolved_by: String(window.__userName || $("who").textContent || "").slice(0,64),
+              resolution_notes: note.slice(0,500)}}]});
+          if (sentR === "pending"){
+            box.remove();
+            l.closest("[data-iss]").outerHTML = `<div class="issdone">&#8682; Resolved on this phone — waiting to send (no signal).</div>`;
+            return;
+          }
           // confirm in place with Undo instead of the row just vanishing (persona 2)
           const rowEl = l.closest("[data-iss]");
           const desc = (rowEl.querySelector(".cn").childNodes[0] || {}).textContent || "issue";
