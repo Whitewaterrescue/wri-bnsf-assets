@@ -4779,8 +4779,10 @@ function showInstall(force){
   if (isInstalled() || !can || (!force && Date.now() < snooze) || window.innerWidth > 900){ host.innerHTML = ""; return; }
   host.innerHTML = `<div class="installbar"><b>Install Readiness on this phone</b> — its own icon, full screen,
     and it keeps your saved trailers for no-signal visits.
-    ${installEvt ? "" : `<div style="margin-top:6px">On iPhone: tap <b>Share</b> (the square with the arrow) at the bottom of
-      Safari, then <b>Add to Home Screen</b>. Then open Readiness from the home screen once with signal —
+    ${installEvt ? "" : `<div style="margin-top:6px">On iPhone: tap <b>Share</b> (the square with the arrow) ${
+      /CriOS/.test(navigator.userAgent) ? "at the right end of Chrome's address bar" : /FxiOS|EdgiOS/.test(navigator.userAgent)
+        ? "in the browser menu" : "at the bottom of Safari"}, then <b>Add to Home Screen</b> (scroll down the list if you don't see it).
+      Then open Readiness from the home screen once with signal —
       the home-screen app keeps its own copy, so open your trailers or trip there.</div>`}
     <div class="btns">${installEvt ? `<button class="btn red" id="instGo">Install</button>` : ""}
       <button class="btn gray" id="instLater">Not now</button></div></div>`;
