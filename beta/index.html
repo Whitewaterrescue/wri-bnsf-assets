@@ -1050,6 +1050,7 @@ function buildFilters(){
 }
 
 function drawMarkers(items){
+  if (!gLayer) return;   // a list refresh can land while boot is still building the map
   gLayer.removeAll();
   if (window._nearMarker) gLayer.add(window._nearMarker);
   items.forEach(x => {
