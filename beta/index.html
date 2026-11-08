@@ -653,14 +653,23 @@ window.addEventListener("error", e => keepErr(e.message));
 window.addEventListener("unhandledrejection", e => keepErr(e.reason && (e.reason.message || e.reason)));
 const consoleErr = console.error.bind(console);
 console.error = (...args) => { keepErr(args.map(v => v && v.message ? v.message : String(v)).join(" ")); consoleErr(...args); };
+// Reports go through the same Logistics 'feedback' action as the Field App (ArcGIS token checked
+// server-side, one email to Cody, retries replay instead of resending). Every report carries a
+// WRI-REPORT block so Cody's Bug Desk can pull it in once (Cody 2026-11-07). mailto stays as the
+// fallback when there's no signal, no sign-in, or the server fails.
+const FEEDBACK_URL = "https://script.google.com/macros/s/AKfycbzdbJxKm9RKm58deSqvrsFQ5GFb-zbaLIZxokwL7JQH-UL5gOAnxqurHaLVuS0NSHyA/exec";
 function reportProblem(){
   const x = selected ? byId[selected] : null;
   const where = $("overlay").classList.contains("open") ? $("oTitle").textContent : "main view";
+  const reportId = "ar-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const block = ["---- WRI-REPORT v1 ----", JSON.stringify({id: reportId, app: "asset-readiness", kind: "problem",
+      page: where, incident_id: "", asset: x ? String(x.attrs.equipment_id || "") : "", version: "", at: new Date().toISOString()}),
+    "---- END WRI-REPORT ----"].join("\n");
   const details = ["---- details for the developers ----",
     "Screen: " + where, "Asset: " + (x ? x.attrs.equipment_id : "none selected"),
     "Signed in as: " + ($("who").textContent || "?"), "View: " + (window.viewMode || "?"),
     "Time: " + new Date().toString(), "Online: " + navigator.onLine, "Device: " + navigator.userAgent,
-    "Recent errors:"].concat(recentErrs.length ? recentErrs : ["none"]).join("\n");
+    "Recent errors:"].concat(recentErrs.length ? recentErrs : ["none"]).concat([block]).join("\n");
   // a panel in the page: on a desktop with no mail app the mailto alone
   // looked dead from all three buttons (persona 2). Copy always works.
   let m = $("bugModal");
@@ -672,10 +681,11 @@ function reportProblem(){
     <textarea id="bugText" class="nfin" style="min-height:90px" placeholder="What happened, and what did you expect?"></textarea>
     <pre id="bugDet">${esc(details)}</pre>
     <div class="btns" style="padding:4px 0;flex-wrap:wrap">
-      <button class="btn red" id="bugMail">Email it</button>
+      <button class="btn red" id="bugSend">Send to Cody</button>
+      <button class="btn gray" id="bugMail">Email instead</button>
       <button class="btn gray" id="bugCopy">Copy</button>
       <button class="btn gray" id="bugClose">Close</button></div>
-    <div class="cd" id="bugHint">If Email doesn't open anything, tap <b>Copy</b> and paste it into a text or email to ${DEV_EMAIL}.</div></div>`;
+    <div class="cd" id="bugHint">No signal? Tap <b>Email instead</b>, or <b>Copy</b> and paste it into a text or email to ${DEV_EMAIL}.</div></div>`;
   m.classList.add("open");
   $("bugText").focus();
   const full = () => ($("bugText").value.trim() || "(no description)") + "\n\n" + details;
@@ -689,9 +699,28 @@ function reportProblem(){
   };
   $("bugMail").onclick = () => {
     location.href = "mailto:" + DEV_EMAIL + "?subject="
-      + encodeURIComponent("BNSF Asset Readiness problem" + (x ? " — " + x.attrs.equipment_id : ""))
+      + encodeURIComponent("[WRI report] BNSF Asset Readiness problem" + (x ? " — " + x.attrs.equipment_id : ""))
       + "&body=" + encodeURIComponent(full());
     $("bugHint").innerHTML = "Your email app should open with this filled in. Nothing opened? Tap <b>Copy</b> instead.";
+  };
+  const fallback = msg => { $("bugHint").innerHTML = esc(msg) + " Tap <b>Email instead</b> or <b>Copy</b>."; };
+  $("bugSend").onclick = async () => {
+    const b = $("bugSend");
+    if (!$("bugText").value.trim()) { $("bugText").focus(); return fallback("Type what happened first."); }
+    if (navigator.onLine === false || window.__offline) return fallback("No signal right now, so this can't send from the app.");
+    const c = esriId.findCredential(PORTAL + "/sharing");
+    if (!c || !c.token) return fallback("You're not signed in to ArcGIS, so this can't send from the app.");
+    b.disabled = true; const label = b.textContent; b.innerHTML = '<span class="spin" style="display:inline-block;width:12px;height:12px;border-width:2px;vertical-align:-1px;margin-right:6px"></span>Sending…';
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 30000);
+    try {
+      const r = await fetch(FEEDBACK_URL, {method: "POST", headers: {"Content-Type": "text/plain;charset=utf-8"}, signal: ctl.signal,
+        body: JSON.stringify({action: "feedback", idempotency_key: reportId, payload: {token: c.token, kind: "problem", app: "asset-readiness",
+          text: $("bugText").value.trim(), details, page: where, incident_id: ""}})});
+      const j = await r.json();
+      if (j && j.ok) { toast("Sent to Cody — thanks"); close(); return; }
+      fallback((j && j.error && (j.error.message || j.error)) || "The server didn't take it.");
+    } catch (e) { fallback(e.name === "AbortError" ? "The server took too long." : "Couldn't reach the server."); }
+    finally { clearTimeout(timer); b.disabled = false; b.textContent = label; }
   };
 }
 ["bugBtn","oBug","btnBug"].forEach(id => $(id).onclick = reportProblem);
