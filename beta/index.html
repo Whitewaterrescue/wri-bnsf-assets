@@ -257,11 +257,14 @@
   #svStage.zoomed{display:block;overflow:auto;touch-action:auto}
   #svImg{max-width:100%;max-height:100%;object-fit:contain;cursor:zoom-in;user-select:none;-webkit-user-drag:none}
   #svStage.zoomed #svImg{max-width:none;max-height:none;width:260%;cursor:zoom-out}
+  #svSvg{position:absolute;display:none;pointer-events:none;overflow:visible;z-index:2}
+  #svSvg text{font:700 13px system-ui,-apple-system,sans-serif;fill:#fff;stroke:rgba(0,0,0,.8);stroke-width:3px;paint-order:stroke}
+  #svNote{position:absolute;left:10px;right:10px;bottom:10px;z-index:4;display:none;background:rgba(17,17,17,.95);border:1px solid #555;border-radius:10px;padding:10px 12px;font-size:13.5px;line-height:1.35;cursor:pointer}
   #svPano{position:absolute;inset:0;display:none}
   #svMsg{position:absolute;inset:0;display:none;flex-direction:column;gap:12px;align-items:center;justify-content:center;text-align:center;padding:20px;font-size:14px;color:#ddd;pointer-events:none}
   .svnav{position:absolute;top:50%;transform:translateY(-50%);width:42px;height:56px;border:none;border-radius:8px;background:rgba(0,0,0,.5);color:#fff;font-size:28px;cursor:pointer;z-index:3}
   #svPrev{left:6px} #svNext{right:6px}
-  #svStage.zoomed .svnav{display:none}
+  #svStage.zoomed .svnav, #sv.editing .svnav{display:none}
   #svTools{flex:none;display:none;flex-direction:column;gap:6px;padding:8px 10px;background:#111;border-top:1px solid #333}
   #svTools .svrow{display:flex;flex-wrap:wrap;gap:6px}
   #svTools button{background:#222;border:1px solid #555;color:#fff;border-radius:8px;padding:9px 11px;font-size:13px;font-weight:700;cursor:pointer}
@@ -398,6 +401,8 @@
   </div>
   <div id="svStage">
     <img id="svImg" alt="" draggable="false">
+    <svg id="svSvg" aria-hidden="true"></svg>
+    <div id="svNote"></div>
     <div id="svPano"></div>
     <div id="svMsg"></div>
     <button class="svnav" id="svPrev" aria-label="Previous picture">&#8249;</button>
@@ -4554,8 +4559,11 @@ async function loadBring(x){
 // ArcGIS login is the key, nothing is public). They open full-screen INSIDE the app.
 // A row belongs to an asset when (1) asset_ids names it, else (2) site_key equals
 // the asset's base warehouse, else (3) it was taken within 300 m of the asset.
-// Online only. 360 annotations live on the row (annot_json, same shape format as
-// the WRI 360 Annotator; drawn by the shared pano-annot.js engine). Admins draw.
+// Online only. Annotations live on the row (annot_json; admins draw, everyone sees):
+//  - sphere: {shapes}, points in yaw/pitch — the WRI 360 Annotator format, drawn by
+//    the shared pano-annot.js engine
+//  - photo:  {space:"img", shapes}, same shapes but points are fractions (0..1) of
+//    the picture, drawn here as an SVG laid over the image
 const SV = {rows:null, at:0, list:[], i:0, seq:0, viewer:null, overlay:null, blob:null,
             editing:false, shapes:[], dirty:false, tool:null, draft:null, sel:null};
 const SV_FIELDS = "OBJECTID,media_id,site_key,site_name,asset_ids,view_kind,caption,sort_order,captured_date,cam_heading,annot_json";
@@ -4665,6 +4673,8 @@ function svDrop(){
   if (SV.blob) URL.revokeObjectURL(SV.blob);
   SV.overlay = SV.viewer = SV.blob = null;
   $("svTools").style.display = "none"; $("svEdit").style.display = "none";
+  SV.kind = null; SV.shapes = []; $("sv").classList.remove("editing");
+  $("svSvg").innerHTML = ""; $("svSvg").style.display = "none"; $("svNote").style.display = "none";
 }
 let svLibP = null;
 const svLibs = () => svLibP || (svLibP = (async () => {
@@ -4702,7 +4712,8 @@ async function svShow(i){
     const tok = await svTok();
     if (seq !== SV.seq) return;
     if (r.view_kind !== "pano360"){
-      img.onload = () => { if (seq === SV.seq){ msg.style.display = "none"; img.style.display = "block"; } };
+      img.onload = () => { if (seq !== SV.seq) return;
+        msg.style.display = "none"; img.style.display = "block"; svPhotoReady(r, seq); };
       img.onerror = () => fail("This picture didn't load. Check your signal and try again.");
       img.src = svUrl(r, "full.jpg", tok);
       return;
@@ -4720,7 +4731,7 @@ async function svShow(i){
     SV.viewer.on("error", e => fail("The 360 view didn't load. " + (e || "")));
     const ready = () => { if (seq !== SV.seq) return;
       msg.style.display = "none";
-      SV.shapes = svSaved(r);
+      SV.kind = "pano"; SV.shapes = svSaved(r);
       svOverlay();
       $("svEdit").style.display = (window.isAdmin && window.viewMode === "admin") ? "" : "none";
       $("svEdit").textContent = "Annotate";
@@ -4754,21 +4765,98 @@ function svOverlay(){
   }});
   svRedraw();
 }
+function svDraftShapes(){
+  const d = SV.draft;
+  if (!d || !d.pts.length) return [];
+  const need = d.kind === "area" ? 3 : 2;
+  return [d.pts.length >= need ? d : d.pts.length >= 2 ? {kind:"line", pts:d.pts} : {kind:"point", pts:d.pts}];
+}
 function svRedraw(){
-  if (!SV.overlay) return;
-  const d = SV.draft, extra = [];
-  if (d && d.pts.length){
-    const need = d.kind === "area" ? 3 : 2;
-    extra.push(d.pts.length >= need ? d : d.pts.length >= 2 ? {kind:"line", pts:d.pts} : {kind:"point", pts:d.pts});
-  }
-  SV.overlay.setShapes(SV.shapes.concat(extra));
+  if (SV.kind === "photo") svPhotoDraw();
+  else if (SV.overlay) SV.overlay.setShapes(SV.shapes.concat(svDraftShapes()));
+  else return;
   svToolsDraw();
+}
+// -- photo annotations: an SVG laid exactly over the picture (follows fit / zoom / scroll)
+const svR4 = v => Math.round(v * 10000) / 10000;
+const svClamp01 = v => Math.max(0, Math.min(1, v));
+function svPhotoReady(r, seq){
+  SV.kind = "photo"; SV.shapes = [];
+  $("svEdit").style.display = (window.isAdmin && window.viewMode === "admin") ? "" : "none";
+  $("svEdit").textContent = "Annotate";
+  if (!/"kind"/.test(r.annot_json || "")) return;       // nothing drawn: don't fetch the engine
+  svLibs().then(() => { if (seq !== SV.seq) return; SV.shapes = svSaved(r); svPhotoDraw(); })
+    .catch(e => console.warn("photo labels unavailable", e));
+}
+function svPhotoPt(e){
+  const b = $("svImg").getBoundingClientRect();
+  return [svR4(svClamp01((e.clientX - b.left) / b.width)), svR4(svClamp01((e.clientY - b.top) / b.height))];
+}
+function svPhotoCenter(){       // [x, y, half-length] of a new arrow: the middle of what is on screen
+  const b = $("svImg").getBoundingClientRect(), g = $("svStage").getBoundingClientRect();
+  return [svClamp01((g.left + g.width / 2 - b.left) / b.width), svR4(svClamp01((g.top + g.height / 2 - b.top) / b.height)),
+          Math.min(0.12, g.width / b.width / 5)];
+}
+function svPhotoHit(cx, cy, tol){
+  const b = $("svImg").getBoundingClientRect(), sp = {x: cx - b.left, y: cy - b.top};
+  for (let i = SV.shapes.length - 1; i >= 0; i--){
+    const s = SV.shapes[i], P = s.pts.map(q => ({x: q[0] * b.width, y: q[1] * b.height}));
+    for (let k = 0; k < P.length; k++)
+      if (Math.hypot(sp.x - P[k].x, sp.y - P[k].y) <= tol) return {shape:s, index:i, vertex:k};
+    if (s.kind === "point") continue;
+    const ring = s.kind === "area" ? P.concat([P[0]]) : P;
+    for (let k = 0; k < ring.length - 1; k++)
+      if (WRIPanoAnnot.distToSeg(sp, ring[k], ring[k + 1]) <= tol) return {shape:s, index:i, vertex:null};
+  }
+  return null;
+}
+function svPhotoDraw(){
+  const svg = $("svSvg"), img = $("svImg");
+  if (SV.kind !== "photo" || img.style.display === "none" || !window.WRIPanoAnnot){ svg.style.display = "none"; return; }
+  const W = img.offsetWidth, H = img.offsetHeight, A = WRIPanoAnnot;
+  svg.style.left = img.offsetLeft + "px"; svg.style.top = img.offsetTop + "px";
+  svg.style.width = W + "px"; svg.style.height = H + "px"; svg.style.display = "block";
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const px = q => [q[0] * W, q[1] * H], f = n => n.toFixed(1);
+  const path = (P, close) => "M" + P.map(q => f(q[0]) + " " + f(q[1])).join("L") + (close ? "Z" : "");
+  const text = (x, y, sh, anchor) => sh.label
+    ? `<text x="${f(x)}" y="${f(y)}" text-anchor="${anchor}">${escA(sh.label)}${sh.note ? " \u24D8" : ""}</text>` : "";
+  let out = "";
+  SV.shapes.concat(svDraftShapes()).forEach(sh => {
+    const st = A.styleOf(sh), P = sh.pts.map(px);
+    if (sh.kind === "point"){
+      out += `<circle cx="${f(P[0][0])}" cy="${f(P[0][1])}" r="7" fill="${st.color}" stroke="${st.casing}" stroke-width="2.5"/>`
+           + text(P[0][0] + 12, P[0][1] + 4, sh, "start");
+      return;
+    }
+    const area = sh.kind === "area", d = path(P, area);
+    out += `<path d="${d}" fill="${area ? st.fill : "none"}" stroke="${st.casing}" stroke-width="7" stroke-linejoin="round" stroke-linecap="round"/>`
+         + `<path d="${d}" fill="none" stroke="${st.color}" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>`;
+    if (sh.kind === "flow" && P.length >= 2){
+      const a = P[P.length - 2], b = P[P.length - 1], ang = Math.atan2(b[1] - a[1], b[0] - a[0]), L = 20, w = 0.45;
+      out += `<path d="${path([b, [b[0] - L * Math.cos(ang - w), b[1] - L * Math.sin(ang - w)],
+                                 [b[0] - L * Math.cos(ang + w), b[1] - L * Math.sin(ang + w)]], true)}" fill="${st.color}" stroke="${st.casing}" stroke-width="2"/>`;
+    }
+    const cx = P.reduce((t, q) => t + q[0], 0) / P.length, cy = P.reduce((t, q) => t + q[1], 0) / P.length;
+    out += area ? text(cx, cy + 4, sh, "middle") : text(cx, Math.min(...P.map(q => q[1])) - 10, sh, "middle");
+  });
+  if (SV.editing){
+    const sh = SV.draft || SV.shapes[SV.sel];
+    if (sh) sh.pts.map(px).forEach(q => out += `<circle cx="${f(q[0])}" cy="${f(q[1])}" r="8" fill="#fff" stroke="#000" stroke-width="2"/>`);
+  }
+  svg.innerHTML = out;
+}
+function svNoteShow(sh){
+  const n = $("svNote");
+  n.innerHTML = `<b>${esc(sh.label || "Note")}</b><br>${esc(sh.note)}<div class="svhint" style="margin-top:4px">Tap to close</div>`;
+  n.style.display = "block"; n.onclick = () => n.style.display = "none";
 }
 const SV_HINT = {point:"Tap the spot to mark.", line:"Tap each point along the line, then Done.",
                  area:"Tap each corner of the area, then Done."};
 function svToolsDraw(){
   const t = $("svTools");
   t.style.display = SV.editing ? "flex" : "none";
+  $("sv").classList.toggle("editing", SV.editing);     // the side arrows would sit on the picture
   if (!SV.editing) return;
   const s = SV.sel != null ? SV.shapes[SV.sel] : null, d = SV.draft;
   const b = (id, label, on, dis) => `<button data-t="${id}" class="${on ? "on" : ""}"${dis ? " disabled" : ""}>${label}</button>`;
@@ -4779,7 +4867,7 @@ function svToolsDraw(){
     (d ? b("done", "Done", false, d.pts.length < need) + b("cancel", "Cancel") : "") +
     `</div>` + (s && !d ? `<div class="svrow">` + b("name", "Label") + b("note", "Note") +
     (s.kind !== "flow" ? b("color", "Colour") : "") + b("del", "Delete") + `</div>` : "") +
-    `<div class="svrow">` + b("start", "Open facing this way") +
+    `<div class="svrow">` + (SV.kind === "photo" ? "" : b("start", "Open facing this way")) +
     `<button data-t="save" class="save"${SV.dirty ? "" : " disabled"}>Save</button></div>
     <div class="svhint">${esc(d ? SV_HINT[d.kind] : SV.tool ? SV_HINT[SV.tool]
       : s ? `Selected: ${s.label || s.kind}. Drag a white dot to move it.` : "Pick a tool, or tap a shape to change it.")}</div>`;
@@ -4801,9 +4889,12 @@ async function svTool(id, btn){
   if (id === "point" || id === "line" || id === "area"){
     SV.tool = SV.tool === id ? null : id; SV.draft = null; SV.sel = null;
   } else if (id === "flow"){
-    const cam = SV.overlay.cam(), sp = cam.hfov / 8;
-    SV.shapes.push({id:svNewId(), kind:"flow", label:"Flow",
-      pts:[[svR2(svWrap(cam.yaw - sp)), svR2(cam.pitch)], [svR2(svWrap(cam.yaw + sp)), svR2(cam.pitch)]]});
+    let pts;
+    if (SV.kind === "photo"){ const c = svPhotoCenter();
+      pts = [[svR4(svClamp01(c[0] - c[2])), c[1]], [svR4(svClamp01(c[0] + c[2])), c[1]]]; }
+    else { const cam = SV.overlay.cam(), sp = cam.hfov / 8;
+      pts = [[svR2(svWrap(cam.yaw - sp)), svR2(cam.pitch)], [svR2(svWrap(cam.yaw + sp)), svR2(cam.pitch)]]; }
+    SV.shapes.push({id:svNewId(), kind:"flow", label:"Flow", pts});
     SV.tool = null; SV.draft = null; SV.sel = SV.shapes.length - 1; SV.dirty = true;
   } else if (id === "done") return svFinish();
   else if (id === "cancel"){ SV.draft = null; SV.tool = null; }
@@ -4824,7 +4915,8 @@ async function svTool(id, btn){
     toast("It will open facing this way after you Save");
   } else if (id === "save"){
     const r = SV.list[SV.i];
-    const json = JSON.stringify({shapes: SV.shapes.filter(WRIPanoAnnot.validShape)});
+    const good = SV.shapes.filter(WRIPanoAnnot.validShape);
+    const json = JSON.stringify(SV.kind === "photo" ? {space:"img", shapes:good} : {shapes:good});
     if (json.length > 31000) return toast("Too many annotations on one view — remove a few");
     const old = btn.textContent; btn.disabled = true; btn.innerHTML = `<span class="svspin"></span>Saving…`;
     try {
@@ -4878,14 +4970,22 @@ async function svTool(id, btn){
   }, true);
   host.addEventListener("pointercancel", () => { if (drag){ drag = null; pan(true); } down = null; }, true);
 
-  $("svEdit").onclick = () => {
+  $("svEdit").onclick = async () => {
+    const btn = $("svEdit"), seq = SV.seq;
     if (SV.editing && !svDirtyOk()) return;
+    if (!window.WRIPanoAnnot){                      // a photo with nothing drawn yet: fetch the engine now
+      btn.disabled = true; btn.innerHTML = `<span class="svspin"></span>Loading…`;
+      try { await svLibs(); } catch(e){ console.error(e); toast("The drawing tools didn't load. Check your signal."); }
+      btn.disabled = false; btn.textContent = "Annotate";
+      if (!window.WRIPanoAnnot || seq !== SV.seq) return;
+    }
     if (SV.editing && SV.dirty){                    // discarded: back to what is saved
       SV.shapes = svSaved(SV.list[SV.i]); delete SV.list[SV.i]._yaw; SV.dirty = false;
     }
     SV.editing = !SV.editing; SV.tool = null; SV.draft = null; SV.sel = null;
-    $("svEdit").textContent = SV.editing ? "Done annotating" : "Annotate";
-    svOverlay();
+    btn.textContent = SV.editing ? "Done annotating" : "Annotate";
+    $("svNote").style.display = "none";
+    if (SV.kind === "photo") svRedraw(); else svOverlay();
     setTimeout(() => { if (SV.viewer) try { SV.viewer.resize(); } catch(e){} }, 0);   // the toolbar took room
   };
   $("svBack").onclick = svClose;
@@ -4895,17 +4995,59 @@ async function svTool(id, btn){
   let sx = null;
   stage.addEventListener("pointerdown", e => { sx = e.target === img || e.target === stage ? {x:e.clientX, y:e.clientY} : null; });
   stage.addEventListener("pointerup", e => {
+    if (SV.editing){ sx = null; return; }
     if (!sx || img.style.display === "none") return;
     const dx = e.clientX - sx.x, dy = e.clientY - sx.y; sx = null;
     if (!stage.classList.contains("zoomed") && Math.abs(dx) > 60 && Math.abs(dx) > 2 * Math.abs(dy))
       return svShow(SV.i + (dx < 0 ? 1 : -1));
     if (Math.hypot(dx, dy) > 8 || e.target !== img) return;
+    const noted = SV.shapes.length && window.WRIPanoAnnot ? svPhotoHit(e.clientX, e.clientY, 22) : null;
+    if (noted && noted.shape.note) return svNoteShow(noted.shape);      // a label with a note: show it, don't zoom
+    $("svNote").style.display = "none";
     const b = img.getBoundingClientRect(), fx = (e.clientX - b.left) / b.width, fy = (e.clientY - b.top) / b.height;
     if (stage.classList.toggle("zoomed")){
       stage.scrollLeft = fx * img.scrollWidth - stage.clientWidth / 2;
       stage.scrollTop = fy * img.scrollHeight - stage.clientHeight / 2;
     }
   });
+  // photo annotating (admins): the sphere's tools, points kept as fractions of the picture
+  let pd = null, pdrag = null;
+  const pEdit = () => SV.editing && SV.kind === "photo";
+  const onVertex = (x, y) => { if (SV.tool || SV.sel == null) return null;
+    const hit = svPhotoHit(x, y, 26); return hit && hit.index === SV.sel && hit.vertex != null ? hit : null; };
+  // a finger on a white dot moves the dot, not the page
+  stage.addEventListener("touchstart", e => { const t = e.touches[0];
+    if (pEdit() && t && onVertex(t.clientX, t.clientY)) e.preventDefault(); }, {passive:false});
+  stage.addEventListener("pointerdown", e => {
+    if (!pEdit() || (e.target.closest && e.target.closest(".svnav,#svNote"))) return;
+    pd = {x:e.clientX, y:e.clientY, id:e.pointerId};
+    const hit = onVertex(e.clientX, e.clientY);
+    if (hit){ pdrag = {id:e.pointerId, v:hit.vertex}; try { stage.setPointerCapture(e.pointerId); } catch(x){} e.preventDefault(); }
+  });
+  stage.addEventListener("pointermove", e => {
+    if (!pdrag || e.pointerId !== pdrag.id || !SV.shapes[SV.sel]) return;
+    SV.shapes[SV.sel].pts[pdrag.v] = svPhotoPt(e); svPhotoDraw(); e.preventDefault();
+  });
+  stage.addEventListener("pointerup", e => {
+    if (pdrag && e.pointerId === pdrag.id){ pdrag = null; pd = null; SV.dirty = true; return svToolsDraw(); }
+    if (!pEdit() || !pd || e.pointerId !== pd.id) return;
+    const moved = Math.hypot(e.clientX - pd.x, e.clientY - pd.y); pd = null;
+    if (moved > 8) return;                          // that was a scroll, not a tap
+    if (SV.tool){
+      const b = img.getBoundingClientRect();
+      if (e.clientX < b.left || e.clientX > b.right || e.clientY < b.top || e.clientY > b.bottom) return;
+      if (!SV.draft) SV.draft = {id:svNewId(), kind:SV.tool, pts:[]};
+      SV.draft.pts.push(svPhotoPt(e));
+      if (SV.tool === "point") return svFinish();
+    } else {
+      const hit = svPhotoHit(e.clientX, e.clientY, 24);
+      SV.sel = hit ? hit.index : null;
+    }
+    svRedraw();
+  });
+  stage.addEventListener("pointercancel", () => { pdrag = null; pd = null; });
+  if (window.ResizeObserver) new ResizeObserver(() => { if (SV.kind === "photo") svPhotoDraw(); }).observe(img);
+
   document.addEventListener("keydown", e => {
     if ($("sv").style.display !== "flex") return;
     if (e.key === "Escape") svClose();
