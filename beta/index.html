@@ -240,6 +240,37 @@
   .hl{margin-left:4px;font-size:12px;font-weight:600}
   @media(max-width:760px){.hl{display:none}}
   @media(min-width:1100px){#detail{width:450px}}
+  /* site views: strip on the card + full-screen viewer */
+  .svstrip{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch}
+  .svth{position:relative;flex:none;width:92px;height:70px;padding:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--surface-alt);cursor:pointer}
+  .svth img{width:100%;height:100%;object-fit:cover;display:block}
+  .svth.sm{width:64px;height:48px;opacity:.65}
+  .svth.sm.on{opacity:1;border:2px solid var(--accent)}
+  .svbadge{position:absolute;left:4px;bottom:4px;background:rgba(0,0,0,.75);color:#fff;font-size:10.5px;font-weight:800;padding:1px 5px;border-radius:5px}
+  #sv{position:fixed;left:0;right:0;top:0;height:100%;z-index:90;background:#000;color:#fff;display:none;flex-direction:column}
+  #sv .svhd{flex:none;display:flex;align-items:center;gap:10px;padding:8px 10px;padding-top:calc(8px + env(safe-area-inset-top));background:#111}
+  #sv .svhd button{flex:none;background:#222;border:1px solid #444;color:#fff;border-radius:8px;padding:9px 12px;font-size:14px;font-weight:700;cursor:pointer}
+  #svTitle{flex:1;min-width:0;font-size:13px;line-height:1.25;overflow:hidden}
+  #svTitle span{color:#bbb}
+  #svCount{flex:none;font-size:12px;color:#bbb}
+  #svStage{flex:1;min-height:0;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:pan-y}
+  #svStage.zoomed{display:block;overflow:auto;touch-action:auto}
+  #svImg{max-width:100%;max-height:100%;object-fit:contain;cursor:zoom-in;user-select:none;-webkit-user-drag:none}
+  #svStage.zoomed #svImg{max-width:none;max-height:none;width:260%;cursor:zoom-out}
+  #svPano{position:absolute;inset:0;display:none}
+  #svMsg{position:absolute;inset:0;display:none;flex-direction:column;gap:12px;align-items:center;justify-content:center;text-align:center;padding:20px;font-size:14px;color:#ddd;pointer-events:none}
+  .svnav{position:absolute;top:50%;transform:translateY(-50%);width:42px;height:56px;border:none;border-radius:8px;background:rgba(0,0,0,.5);color:#fff;font-size:28px;cursor:pointer;z-index:3}
+  #svPrev{left:6px} #svNext{right:6px}
+  #svStage.zoomed .svnav{display:none}
+  #svTools{flex:none;display:none;flex-direction:column;gap:6px;padding:8px 10px;background:#111;border-top:1px solid #333}
+  #svTools .svrow{display:flex;flex-wrap:wrap;gap:6px}
+  #svTools button{background:#222;border:1px solid #555;color:#fff;border-radius:8px;padding:9px 11px;font-size:13px;font-weight:700;cursor:pointer}
+  #svTools button.on{background:var(--accent);border-color:var(--accent)}
+  #svTools button.save{margin-left:auto;background:#2e9d57;border-color:transparent}
+  #svTools button:disabled{opacity:.45;cursor:default}
+  .svhint{font-size:12px;color:#bbb}
+  .svspin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:sp 1s linear infinite;margin-right:6px;vertical-align:-1px}
+  #svStrip{flex:none;display:flex;gap:6px;overflow-x:auto;padding:6px 10px calc(6px + env(safe-area-inset-bottom));background:#111}
   #bugModal{position:fixed;inset:0;z-index:97;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:16px}
   #bugModal.open{display:flex}
   #bugModal .bm{background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;padding:14px}
@@ -340,6 +371,7 @@
     </div>
   </div>
   <div class="sec"><h3>Notes &amp; what to bring</h3><div id="dNotes" style="font-size:13px;color:var(--text-dim)">—</div></div>
+  <div class="sec" id="secSite"><h3>Site views</h3><div id="dSite" style="font-size:13px;color:var(--text-dim)">—</div></div>
   <div class="btns" style="padding-top:0">
     <button class="btn gray" id="btnPrep">Site Visit Prep Sheet (printable)</button>
   </div>
@@ -356,6 +388,23 @@
     <a href="#" id="lnkInv">View up-to-date inventory &#8594;</a></div></div>
   <div class="sec"><h3>Photos</h3><div id="dPhotos" style="font-size:13px;color:var(--text-dim)">—</div></div>
   <div class="btns"><button class="btn gray" id="btnBug">Report a problem with this app</button></div>
+</div>
+<div id="sv" role="dialog" aria-label="Site views">
+  <div class="svhd">
+    <button id="svBack">&#8592; Back</button>
+    <div id="svTitle"></div>
+    <span id="svCount"></span>
+    <button id="svEdit" style="display:none">Annotate</button>
+  </div>
+  <div id="svStage">
+    <img id="svImg" alt="" draggable="false">
+    <div id="svPano"></div>
+    <div id="svMsg"></div>
+    <button class="svnav" id="svPrev" aria-label="Previous picture">&#8249;</button>
+    <button class="svnav" id="svNext" aria-label="Next picture">&#8250;</button>
+  </div>
+  <div id="svTools"></div>
+  <div id="svStrip"></div>
 </div>
 <div id="overlay">
   <div class="ohd">
@@ -1351,6 +1400,7 @@ function select(eid, zoom){
   $("auditRow1").style.display = (showDOT || showInv) ? "" : "none";
   $("auditTitle").textContent = (a.asset_category === "trailer" ? "Trailer" : "Asset") + " Audit";
   loadBring(x);
+  loadSiteViews(x);
   loadPhotos(x);
   $("btnMob").textContent = a.asset_status === "deployed" ? "Return from incident" : "Mobilize";
   $("btnMob").className = "btn " + (a.asset_status === "deployed" ? "red" : "blue");
@@ -1473,7 +1523,7 @@ function closeOverlay(fromPop){
   const d = ovDepth; ovDepth = 0;
   // back on the asset page after a form: show what was just saved
   const xs = byId[selected];
-  if (xs && !(NAVTEST && !window.__navlive)){ loadBring(xs); loadPhotos(xs); loadHistory(xs); }
+  if (xs && !(NAVTEST && !window.__navlive)){ loadBring(xs); loadSiteViews(xs); loadPhotos(xs); loadHistory(xs); }
   if (!fromPop && d) history.go(-d);
 }
 // depth 2 always means "child of the audit guide" — every stacked opener is a
@@ -1561,6 +1611,7 @@ document.addEventListener("input", e => {
 // headless-test hook: exposes overlay/back-nav state only (no data access) so
 // the guide's Back behavior can be regression-tested without an AGOL login
 window.__navtest = {
+  svDebug: id => ({geom: byId[id] && byId[id].geom && (byId[id].geom.toJSON ? byId[id].geom.toJSON() : byId[id].geom), ll: byId[id] && svLL(byId[id].geom), rows: SV.rows}),
   openOverlay, afterSubmitToGuide,
   // screenshot/QA harness: boot with an externally supplied (already valid)
   // token instead of the redirect flow — grants nothing the caller lacks
@@ -4497,6 +4548,373 @@ async function loadBring(x){
         The inventory audit due date won't move until the ${crit.length} critical problem(s) above are fixed and resolved.</div>`);
   } catch(e){ console.error(e); }
 }
+
+// ---- Site views (2026-11-13): orientation images of the SITE this asset sits at —
+// drone photos and 360 spheres from layer 14 `site_views` (private service: the
+// ArcGIS login is the key, nothing is public). They open full-screen INSIDE the app.
+// A row belongs to an asset when (1) asset_ids names it, else (2) site_key equals
+// the asset's base warehouse, else (3) it was taken within 300 m of the asset.
+// Online only. 360 annotations live on the row (annot_json, same shape format as
+// the WRI 360 Annotator; drawn by the shared pano-annot.js engine). Admins draw.
+const SV = {rows:null, at:0, list:[], i:0, seq:0, viewer:null, overlay:null, blob:null,
+            editing:false, shapes:[], dirty:false, tool:null, draft:null, sel:null};
+const SV_FIELDS = "OBJECTID,media_id,site_key,site_name,asset_ids,view_kind,caption,sort_order,captured_date,cam_heading,annot_json";
+const SV_APP_VERSION = "site-views-1";
+const escA = s => esc(s).replace(/"/g, "&quot;");
+const svTok = async () => (await esriId.getCredential(PORTAL + "/sharing")).token;
+const svPost = async (path, params) => {
+  const body = new URLSearchParams(Object.assign({f:"json", token: await svTok()}, params));
+  const r = await fetch(`${SVC}/14/${path}`, {method:"POST", body}).then(x => x.json());
+  if (r.error) throw new Error(r.error.message || JSON.stringify(r.error));
+  return r;
+};
+async function svRows(force){
+  if (SV.rows && !force && Date.now() - SV.at < 10 * 60000) return SV.rows;
+  const r = await svPost("query", {where:"1=1", outFields:SV_FIELDS, returnGeometry:"true", outSR:"4326"});
+  SV.rows = (r.features || []).map(f => Object.assign({}, f.attributes,
+    {lon: f.geometry ? f.geometry.x : null, lat: f.geometry ? f.geometry.y : null, att: null}));
+  SV.at = Date.now();
+  return SV.rows;
+}
+async function svAtt(list){
+  const need = list.filter(r => !r.att);
+  if (!need.length) return;
+  const by = Object.fromEntries(need.map(r => [r.OBJECTID, r]));
+  const a = await svPost("queryAttachments", {objectIds: need.map(r => r.OBJECTID).join(","), resultRecordCount:"1000"});
+  need.forEach(r => r.att = {});
+  (a.attachmentGroups || []).forEach(g => (g.attachmentInfos || []).forEach(at => {
+    if (by[g.parentObjectId]) by[g.parentObjectId].att[at.name] = at.id; }));
+}
+const svUrl = (r, name, tok) => `${SVC}/14/${r.OBJECTID}/attachments/${r.att[name]}?token=${tok}`;
+function svMeters(la1, lo1, la2, lo2){
+  const p = Math.PI / 180, a = Math.sin((la2 - la1) * p / 2) ** 2 +
+    Math.cos(la1 * p) * Math.cos(la2 * p) * Math.sin((lo2 - lo1) * p / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(a));
+}
+// [lat, lon] of an asset: a live Point, or the plain {x,y} the saved (offline) copy hands back
+function svLL(g){
+  if (!g) return null;
+  if (g.latitude != null && g.longitude != null) return [g.latitude, g.longitude];
+  if (g.x == null || g.y == null) return null;
+  if (Math.abs(g.x) <= 180 && Math.abs(g.y) <= 90) return [g.y, g.x];
+  return [(2 * Math.atan(Math.exp(g.y / 6378137)) - Math.PI / 2) * 180 / Math.PI, g.x / 6378137 * 180 / Math.PI];
+}
+function svMatch(x, rows){
+  const id = x.attrs.equipment_id, keyOf = v => String(v || "").trim().toUpperCase();
+  const base = keyOf(x.attrs.base_warehouse);
+  const out = new Set(rows.filter(r => String(r.asset_ids || "").includes("|" + id + "|")));
+  let key = base && rows.some(r => keyOf(r.site_key) === base) ? base : null;
+  const ll = svLL(x.geom);
+  if (!key && ll){
+    let best = 300;
+    rows.forEach(r => { if (r.lat == null) return;
+      const d = svMeters(ll[0], ll[1], r.lat, r.lon);
+      if (d <= best){ best = d; key = keyOf(r.site_key); } });
+  }
+  if (key) rows.filter(r => keyOf(r.site_key) === key).forEach(r => out.add(r));
+  return [...out].sort((p, q) => (p.sort_order || 0) - (q.sort_order || 0) || p.OBJECTID - q.OBJECTID);
+}
+async function loadSiteViews(x){
+  const host = $("dSite");
+  if (isOff()){ host.textContent = "Site views show when you have signal."; return; }
+  host.textContent = "Loading…";
+  try {
+    const rows = await svRows();
+    const list = svMatch(x, rows).filter(r => r.view_kind === "photo" || r.view_kind === "pano360");
+    await svAtt(list);
+    const tok = await svTok();
+    if (x.attrs.equipment_id !== selected) return;
+    const ok = list.filter(r => r.att && r.att["thumb.jpg"]);
+    if (!ok.length){
+      host.innerHTML = `<span style="color:var(--text-muted)">No site views for this location yet</span>`;
+      return;
+    }
+    host.innerHTML = `<div style="margin-bottom:6px">${esc(ok[0].site_name || "")}</div><div class="svstrip">` +
+      ok.map((r, n) => `<button class="svth" data-sv="${n}" title="${escA(r.caption)}" aria-label="${escA(r.caption)}">
+        <img src="${svUrl(r, "thumb.jpg", tok)}" loading="lazy" alt="">${r.view_kind === "pano360" ? `<span class="svbadge">360°</span>` : ""}</button>`).join("") +
+      `</div><div class="cd" style="margin-top:4px">Tap a picture to open it here.${ok.some(r => r.view_kind === "pano360") ? " 360° = look around the whole site." : ""}</div>`;
+    host.querySelectorAll("[data-sv]").forEach(b => b.onclick = () => svOpen(ok, +b.dataset.sv));
+  } catch(e){ console.error(e); host.textContent = "Site views unavailable"; }
+}
+
+// -- the full-screen viewer. Its height is PINNED in pixels: on iPhone the address
+// bar slides during a drag and a viewport-unit height would resize the sphere
+// under the labels mid-gesture (the 360-viewer drift bug, 2026-09-27).
+let svPinT = null, svPinW = 0;
+function svPin(now){
+  const vv = window.visualViewport, w = Math.round(vv ? vv.width : innerWidth), h = Math.round(vv ? vv.height : innerHeight);
+  const apply = () => { svPinW = w; $("sv").style.height = h + "px";
+    if (SV.viewer) try { SV.viewer.resize(); } catch(e){} };
+  clearTimeout(svPinT);
+  if (now || w !== svPinW) apply(); else svPinT = setTimeout(apply, 400);
+}
+function svOpen(list, i){
+  SV.list = list; $("sv").style.display = "flex"; svPin(true);
+  svShow(i);
+}
+function svDirtyOk(){ return !SV.dirty || confirm("Leave without saving your annotation changes?"); }
+function svClose(){
+  if (!svDirtyOk()) return;
+  svDrop(); $("svImg").removeAttribute("src"); $("sv").style.display = "none";
+}
+function svDrop(){
+  SV.seq++; SV.dirty = false; SV.editing = false; SV.tool = null; SV.draft = null; SV.sel = null;
+  if (SV.list[SV.i]) delete SV.list[SV.i]._yaw;
+  if (SV.overlay) try { SV.overlay.destroy(); } catch(e){}
+  if (SV.viewer) try { SV.viewer.destroy(); } catch(e){}
+  if (SV.blob) URL.revokeObjectURL(SV.blob);
+  SV.overlay = SV.viewer = SV.blob = null;
+  $("svTools").style.display = "none"; $("svEdit").style.display = "none";
+}
+let svLibP = null;
+const svLibs = () => svLibP || (svLibP = (async () => {
+  const add = (tag, at) => new Promise((ok, no) => { const e = document.createElement(tag);
+    Object.assign(e, at); e.onload = ok; e.onerror = () => no(new Error("could not load " + (at.src || at.href)));
+    document.head.appendChild(e); });
+  await add("link", {rel:"stylesheet", href:"https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css"});
+  await add("script", {src:"https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"});
+  // the ONE shared annotation engine (same origin; never copy it into this repo)
+  await add("script", {src:"https://whitewaterrescue.github.io/wri-incident-panos/panos/pano-annot.js?v=1.0.0"});
+  if (!window.pannellum || !window.WRIPanoAnnot) throw new Error("360 viewer did not start");
+})().catch(e => { svLibP = null; throw e; }));
+function svPanoFile(r){
+  let big = false;
+  try { const gl = document.createElement("canvas").getContext("webgl");
+    big = gl.getParameter(gl.MAX_TEXTURE_SIZE) >= 8192 && Math.min(screen.width, screen.height) >= 700; } catch(e){}
+  return big && r.att["pano_8192.jpg"] ? "pano_8192.jpg" : "pano_4096.jpg";
+}
+const svSaved = r => { try { return (JSON.parse(r.annot_json || "{}").shapes || []).filter(WRIPanoAnnot.validShape); }
+                       catch(e){ return []; } };
+async function svShow(i){
+  if (!svDirtyOk()) return;
+  svDrop();
+  const seq = SV.seq, n = SV.list.length;
+  SV.i = i = (i + n) % n;
+  const r = SV.list[i], img = $("svImg"), pano = $("svPano"), msg = $("svMsg"), stage = $("svStage");
+  $("svTitle").innerHTML = `<b>${esc(r.site_name || "")}</b><br><span>${esc(r.caption || "")}</span>`;
+  $("svCount").textContent = `${i + 1} / ${n}`;
+  $("svPrev").style.display = $("svNext").style.display = n > 1 ? "" : "none";
+  stage.classList.remove("zoomed"); img.style.display = "none"; pano.style.display = "none";
+  msg.style.display = "flex"; msg.innerHTML = `<div class="spin"></div><div>Loading…</div>`;
+  const fail = t => { if (seq === SV.seq){ msg.style.display = "flex"; msg.textContent = t; } };
+  svStripDraw();
+  try {
+    const tok = await svTok();
+    if (seq !== SV.seq) return;
+    if (r.view_kind !== "pano360"){
+      img.onload = () => { if (seq === SV.seq){ msg.style.display = "none"; img.style.display = "block"; } };
+      img.onerror = () => fail("This picture didn't load. Check your signal and try again.");
+      img.src = svUrl(r, "full.jpg", tok);
+      return;
+    }
+    const [res] = await Promise.all([fetch(svUrl(r, svPanoFile(r), tok)), svLibs()]);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const blob = await res.blob();
+    if (seq !== SV.seq) return;
+    if (!/^image\//.test(blob.type)) throw new Error("not an image (sign in again?)");
+    SV.blob = URL.createObjectURL(blob);
+    pano.style.display = "block";
+    SV.viewer = pannellum.viewer("svPano", {type:"equirectangular", panorama:SV.blob, autoLoad:true,
+      compass:false, yaw:+r.cam_heading || 0, pitch:-12, hfov: innerWidth < innerHeight ? 65 : 100, minHfov:30, maxHfov:120,
+      showFullscreenCtrl:false, keyboardZoom:false, friction:0.2});
+    SV.viewer.on("error", e => fail("The 360 view didn't load. " + (e || "")));
+    const ready = () => { if (seq !== SV.seq) return;
+      msg.style.display = "none";
+      SV.shapes = svSaved(r);
+      svOverlay();
+      $("svEdit").style.display = (window.isAdmin && window.viewMode === "admin") ? "" : "none";
+      $("svEdit").textContent = "Annotate";
+    };
+    if (SV.viewer.isLoaded && SV.viewer.isLoaded()) ready(); else SV.viewer.on("load", ready);
+  } catch(e){ console.error(e); fail("This view didn't load. Check your signal and try again."); }
+}
+function svStripDraw(){
+  $("svStrip").style.display = SV.list.length > 1 ? "" : "none";
+  svTok().then(tok => {
+    $("svStrip").innerHTML = SV.list.map((r, n) =>
+      `<button class="svth sm${n === SV.i ? " on" : ""}" data-n="${n}" aria-label="${escA(r.caption)}"><img src="${svUrl(r, "thumb.jpg", tok)}" alt="">${r.view_kind === "pano360" ? `<span class="svbadge">360°</span>` : ""}</button>`).join("");
+    $("svStrip").querySelectorAll("[data-n]").forEach(b => b.onclick = () => { if (+b.dataset.n !== SV.i) svShow(+b.dataset.n); });
+    const on = $("svStrip").querySelector(".on");
+    if (on) $("svStrip").scrollLeft = on.offsetLeft - $("svStrip").clientWidth / 2 + on.offsetWidth / 2;
+  }).catch(() => {});
+}
+// -- 360 annotations: view for everyone, draw for admins
+function svOverlay(){
+  if (SV.overlay) try { SV.overlay.destroy(); } catch(e){}
+  SV.overlay = WRIPanoAnnot.Overlay(SV.viewer, {notes: !SV.editing, onRender: (cam, g) => {
+    while (g.firstChild) g.removeChild(g.firstChild);
+    if (!SV.editing) return;
+    const s = SV.draft || SV.shapes[SV.sel];
+    if (!s) return;
+    s.pts.forEach(p => { const q = WRIPanoAnnot.project(cam, p[0], p[1]); if (q.z <= 0.02) return;
+      const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      c.setAttribute("cx", q.x); c.setAttribute("cy", q.y); c.setAttribute("r", 8);
+      c.setAttribute("fill", "#fff"); c.setAttribute("stroke", "#000"); c.setAttribute("stroke-width", 2);
+      g.appendChild(c); });
+  }});
+  svRedraw();
+}
+function svRedraw(){
+  if (!SV.overlay) return;
+  const d = SV.draft, extra = [];
+  if (d && d.pts.length){
+    const need = d.kind === "area" ? 3 : 2;
+    extra.push(d.pts.length >= need ? d : d.pts.length >= 2 ? {kind:"line", pts:d.pts} : {kind:"point", pts:d.pts});
+  }
+  SV.overlay.setShapes(SV.shapes.concat(extra));
+  svToolsDraw();
+}
+const SV_HINT = {point:"Tap the spot to mark.", line:"Tap each point along the line, then Done.",
+                 area:"Tap each corner of the area, then Done."};
+function svToolsDraw(){
+  const t = $("svTools");
+  t.style.display = SV.editing ? "flex" : "none";
+  if (!SV.editing) return;
+  const s = SV.sel != null ? SV.shapes[SV.sel] : null, d = SV.draft;
+  const b = (id, label, on, dis) => `<button data-t="${id}" class="${on ? "on" : ""}"${dis ? " disabled" : ""}>${label}</button>`;
+  const need = d ? (d.kind === "area" ? 3 : 2) : 0;
+  t.innerHTML = `<div class="svrow">` +
+    b("point", "Point", SV.tool === "point") + b("line", "Line", SV.tool === "line") +
+    b("area", "Area", SV.tool === "area") + b("flow", "Flow arrow") +
+    (d ? b("done", "Done", false, d.pts.length < need) + b("cancel", "Cancel") : "") +
+    `</div>` + (s && !d ? `<div class="svrow">` + b("name", "Label") + b("note", "Note") +
+    (s.kind !== "flow" ? b("color", "Colour") : "") + b("del", "Delete") + `</div>` : "") +
+    `<div class="svrow">` + b("start", "Open facing this way") +
+    `<button data-t="save" class="save"${SV.dirty ? "" : " disabled"}>Save</button></div>
+    <div class="svhint">${esc(d ? SV_HINT[d.kind] : SV.tool ? SV_HINT[SV.tool]
+      : s ? `Selected: ${s.label || s.kind}. Drag a white dot to move it.` : "Pick a tool, or tap a shape to change it.")}</div>`;
+  t.querySelectorAll("[data-t]").forEach(x => x.onclick = () => svTool(x.dataset.t, x));
+}
+const svNewId = () => "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const svR2 = v => Math.round(v * 100) / 100;
+const svWrap = y => ((y + 180) % 360 + 360) % 360 - 180;
+function svFinish(){
+  const d = SV.draft; SV.draft = null; SV.tool = null;
+  if (!d) return svRedraw();
+  const label = prompt("Label for this " + d.kind + " (shows on the picture):", "");
+  if (label === null) return svRedraw();
+  if (label.trim()) d.label = label.trim().slice(0, 60);
+  SV.shapes.push(d); SV.sel = SV.shapes.length - 1; SV.dirty = true; svRedraw();
+}
+async function svTool(id, btn){
+  const s = SV.sel != null ? SV.shapes[SV.sel] : null;
+  if (id === "point" || id === "line" || id === "area"){
+    SV.tool = SV.tool === id ? null : id; SV.draft = null; SV.sel = null;
+  } else if (id === "flow"){
+    const cam = SV.overlay.cam(), sp = cam.hfov / 8;
+    SV.shapes.push({id:svNewId(), kind:"flow", label:"Flow",
+      pts:[[svR2(svWrap(cam.yaw - sp)), svR2(cam.pitch)], [svR2(svWrap(cam.yaw + sp)), svR2(cam.pitch)]]});
+    SV.tool = null; SV.draft = null; SV.sel = SV.shapes.length - 1; SV.dirty = true;
+  } else if (id === "done") return svFinish();
+  else if (id === "cancel"){ SV.draft = null; SV.tool = null; }
+  else if (id === "name" && s){
+    const v = prompt("Label (shows on the picture):", s.label || "");
+    if (v !== null){ if (v.trim()) s.label = v.trim().slice(0, 60); else delete s.label; SV.dirty = true; }
+  } else if (id === "note" && s){
+    const v = prompt("Note (opens when someone taps the label):", s.note || "");
+    if (v !== null){ if (v.trim()) s.note = v.trim().slice(0, WRIPanoAnnot.MAX_NOTE); else delete s.note; SV.dirty = true; }
+  } else if (id === "color" && s){
+    const o = WRIPanoAnnot.PALETTE_ORDER, cur = WRIPanoAnnot.styleOf(s).key;
+    s.c = o[(o.indexOf(cur) + 1) % o.length]; SV.dirty = true;
+  } else if (id === "del" && s){
+    if (!confirm(`Delete "${s.label || s.kind}"?`)) return;
+    SV.shapes.splice(SV.sel, 1); SV.sel = null; SV.dirty = true;
+  } else if (id === "start"){
+    SV.list[SV.i]._yaw = Math.round(SV.viewer.getYaw()); SV.dirty = true;
+    toast("It will open facing this way after you Save");
+  } else if (id === "save"){
+    const r = SV.list[SV.i];
+    const json = JSON.stringify({shapes: SV.shapes.filter(WRIPanoAnnot.validShape)});
+    if (json.length > 31000) return toast("Too many annotations on one view — remove a few");
+    const old = btn.textContent; btn.disabled = true; btn.innerHTML = `<span class="svspin"></span>Saving…`;
+    try {
+      const at = {OBJECTID: r.OBJECTID, annot_json: json, app_version: SV_APP_VERSION, source_device: "viewer"};
+      if (r._yaw != null) at.cam_heading = r._yaw;
+      const res = await svPost("applyEdits", {updates: JSON.stringify([{attributes: at}])});
+      const u = (res.updateResults || [])[0];
+      if (!u || !u.success) throw new Error(JSON.stringify((u && u.error) || res));
+      r.annot_json = json; if (r._yaw != null){ r.cam_heading = r._yaw; delete r._yaw; }
+      SV.dirty = false; toast("Annotations saved");
+    } catch(e){ console.error(e); toast("Save failed: " + (e.message || e)); btn.textContent = old; btn.disabled = false; return; }
+  }
+  svRedraw();
+}
+(function svBind(){
+  const host = $("svPano"), stage = $("svStage"), img = $("svImg");
+  let down = null, drag = null;
+  const pan = on => { try { SV.viewer.getConfig().draggable = on; } catch(e){} };
+  const here = e => { const yp = WRIPanoAnnot.unproject(SV.viewer, e.clientX, e.clientY); return [svR2(svWrap(yp[0])), svR2(yp[1])]; };
+  host.addEventListener("pointerdown", e => {
+    if (!SV.editing || !SV.overlay) return;
+    if (e.target.closest && e.target.closest(".pnlm-controls-container")) return;
+    down = {x:e.clientX, y:e.clientY, id:e.pointerId};
+    if (!SV.tool && SV.sel != null){
+      const hit = SV.overlay.hitTest(e.clientX, e.clientY, 26);
+      if (hit && hit.index === SV.sel && hit.vertex != null){
+        drag = {id:e.pointerId, v:hit.vertex}; pan(false); e.stopPropagation(); }
+    }
+  }, true);
+  host.addEventListener("pointermove", e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const s = SV.shapes[SV.sel]; if (!s) return;
+    const p = here(e); if (!isFinite(p[0]) || !isFinite(p[1])) return;
+    s.pts[drag.v] = p; SV.overlay.invalidate(); e.stopPropagation();
+  }, true);
+  host.addEventListener("pointerup", e => {
+    if (drag && e.pointerId === drag.id){ drag = null; pan(true); SV.dirty = true; down = null; e.stopPropagation(); return svToolsDraw(); }
+    if (!SV.editing || !down || e.pointerId !== down.id) return;
+    const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y); down = null;
+    if (moved > 8) return;                          // that was a look-around, not a tap
+    if (SV.tool){
+      const p = here(e); if (!isFinite(p[0]) || !isFinite(p[1])) return;
+      if (!SV.draft) SV.draft = {id:svNewId(), kind:SV.tool, pts:[]};
+      SV.draft.pts.push(p);
+      if (SV.tool === "point") return svFinish();
+    } else {
+      const hit = SV.overlay.hitTest(e.clientX, e.clientY, 24);
+      SV.sel = hit ? hit.index : null;
+    }
+    svRedraw();
+  }, true);
+  host.addEventListener("pointercancel", () => { if (drag){ drag = null; pan(true); } down = null; }, true);
+
+  $("svEdit").onclick = () => {
+    if (SV.editing && !svDirtyOk()) return;
+    if (SV.editing && SV.dirty){                    // discarded: back to what is saved
+      SV.shapes = svSaved(SV.list[SV.i]); delete SV.list[SV.i]._yaw; SV.dirty = false;
+    }
+    SV.editing = !SV.editing; SV.tool = null; SV.draft = null; SV.sel = null;
+    $("svEdit").textContent = SV.editing ? "Done annotating" : "Annotate";
+    svOverlay();
+    setTimeout(() => { if (SV.viewer) try { SV.viewer.resize(); } catch(e){} }, 0);   // the toolbar took room
+  };
+  $("svBack").onclick = svClose;
+  $("svPrev").onclick = () => svShow(SV.i - 1);
+  $("svNext").onclick = () => svShow(SV.i + 1);
+  // photo: tap = zoom in / out around the tapped spot; swipe = next / previous
+  let sx = null;
+  stage.addEventListener("pointerdown", e => { sx = e.target === img || e.target === stage ? {x:e.clientX, y:e.clientY} : null; });
+  stage.addEventListener("pointerup", e => {
+    if (!sx || img.style.display === "none") return;
+    const dx = e.clientX - sx.x, dy = e.clientY - sx.y; sx = null;
+    if (!stage.classList.contains("zoomed") && Math.abs(dx) > 60 && Math.abs(dx) > 2 * Math.abs(dy))
+      return svShow(SV.i + (dx < 0 ? 1 : -1));
+    if (Math.hypot(dx, dy) > 8 || e.target !== img) return;
+    const b = img.getBoundingClientRect(), fx = (e.clientX - b.left) / b.width, fy = (e.clientY - b.top) / b.height;
+    if (stage.classList.toggle("zoomed")){
+      stage.scrollLeft = fx * img.scrollWidth - stage.clientWidth / 2;
+      stage.scrollTop = fy * img.scrollHeight - stage.clientHeight / 2;
+    }
+  });
+  document.addEventListener("keydown", e => {
+    if ($("sv").style.display !== "flex") return;
+    if (e.key === "Escape") svClose();
+    else if (!SV.editing && e.key === "ArrowRight") svShow(SV.i + 1);
+    else if (!SV.editing && e.key === "ArrowLeft") svShow(SV.i - 1);
+  });
+  addEventListener("resize", () => { if ($("sv").style.display === "flex") svPin(false); });
+  if (window.visualViewport) visualViewport.addEventListener("resize", () => { if ($("sv").style.display === "flex") svPin(false); });
+})();
 
 // ---- Photos: attachments from this asset's inspections + issues, newest first
 async function loadPhotos(x){
