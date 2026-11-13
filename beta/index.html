@@ -375,6 +375,7 @@
     <div class="btns" id="auditMaint" style="display:none"></div>
     <div class="btns">
       <button class="btn red" id="btnIssue">Report Issue</button>
+      <button class="btn gray" id="btnRcpt">Add receipt</button>
     </div>
   </div>
   <div class="sec"><h3>Notes &amp; what to bring</h3><div id="dNotes" style="font-size:13px;color:var(--text-dim)">—</div></div>
@@ -390,6 +391,7 @@
     <button class="btn gray" id="btnAdmClocks" style="border-color:var(--accent)">Edit due dates</button>
   </div>
   <div class="sec"><h3>Due dates</h3><div id="dClocks"></div></div>
+  <div class="sec" id="secRcpt"><h3>Receipts</h3><div id="dRcpt" style="font-size:13px;color:var(--text-dim)">—</div></div>
   <div class="sec" id="secHist"><h3>History</h3><div id="dHist" style="font-size:13px;color:var(--text-dim)">Loading…</div></div>
   <div class="sec"><h3>Identity</h3><div><div class="kv" id="dIdent"></div>
     <a href="#" id="lnkInv">View up-to-date inventory &#8594;</a></div></div>
@@ -806,6 +808,7 @@ const layers = {
   counts: new FeatureLayer({url: SVC + "/3"}),
   trips: new FeatureLayer({url: SVC + "/12"}),   // per-user active trip
   bins:  new FeatureLayer({url: SVC + "/13"}),   // sealed inventory bins
+  receipts: new FeatureLayer({url: SVC + "/15"}),   // repair / supply receipts (history only)
 };
 
 // ================= offline (Cody 2026-11-07): the app opens with no signal =================
@@ -966,7 +969,7 @@ async function saveForOffline(eids, quiet){
     const aw = `asset_guid='{${g}}'`;
     const mw = `asset_equipment_id='${eid.replace(/'/g, "''")}'`
       + (eqG.length ? ` OR equip_guid IN (${eqG.map(q => `'{${q}}'`).join(",")})` : "");
-    const plan = [[layers.baseline, aw], [layers.bins, aw], [layers.issues, aw], [layers.insp, aw], [layers.maint, mw]];
+    const plan = [[layers.baseline, aw], [layers.bins, aw], [layers.issues, aw], [layers.insp, aw], [layers.maint, mw], [layers.receipts, aw]];
     const got = await Promise.all(plan.map(([L, w]) =>
       L.queryFeatures({where: w, outFields: ["*"], num: 2000}).catch(e => { console.warn("offline save", eid, e); return null; })));
     if (got[0] === null) continue;   // no item list = not usable offline
@@ -1414,6 +1417,7 @@ function select(eid, zoom){
   $("auditTitle").textContent = (a.asset_category === "trailer" ? "Trailer" : "Asset") + " Audit";
   loadBring(x);
   loadSiteViews(x);
+  loadReceipts(x);
   loadPhotos(x);
   $("btnMob").textContent = a.asset_status === "deployed" ? "Return from incident" : "Mobilize";
   $("btnMob").className = "btn " + (a.asset_status === "deployed" ? "red" : "blue");
@@ -1536,7 +1540,7 @@ function closeOverlay(fromPop){
   const d = ovDepth; ovDepth = 0;
   // back on the asset page after a form: show what was just saved
   const xs = byId[selected];
-  if (xs && !(NAVTEST && !window.__navlive)){ loadBring(xs); loadSiteViews(xs); loadPhotos(xs); loadHistory(xs); }
+  if (xs && !(NAVTEST && !window.__navlive)){ loadBring(xs); loadSiteViews(xs); loadReceipts(xs); loadPhotos(xs); loadHistory(xs); }
   if (!fromPop && d) history.go(-d);
 }
 // depth 2 always means "child of the audit guide" — every stacked opener is a
@@ -2404,6 +2408,7 @@ $("btnInsp").onclick = () => openNativeDOT();
 // reads the baseline live, so tailored S123 forms are no longer a prerequisite
 $("btnCount").onclick = () => openGuide();
 $("btnIssue").onclick = () => openNativeIssue();
+$("btnRcpt").onclick = () => openReceiptForm();
 
 // collapsible detail sections
 document.querySelectorAll("#detail .sec h3").forEach(h =>
@@ -4554,6 +4559,13 @@ async function loadHistory(x){
       if (a.issue_status === "resolved")
         events.push({when:a.resolved_date, label:"Issue resolved — " + esc(stripTags(a.issue_desc).slice(0,80)),
                      note:a.resolution_notes, who:a.resolved_by, kind:"Issue"}); });
+    try {
+      (await layers.receipts.queryFeatures({where:`asset_guid='{${guid}}'`,
+        outFields:["receipt_date","vendor","amount","description","submitted_by"], num:200}))
+        .features.forEach(f => { const a = f.attributes;
+          events.push({when:a.receipt_date, label:"Receipt — " + esc(a.vendor || "") + " · " + money(a.amount),
+                       note:a.description, who:a.submitted_by, kind:"Receipt"}); });
+    } catch(re){ console.warn("receipts not in history", re); }
     events.sort((p,q) => (q.when||0)-(p.when||0));
     host.innerHTML = events.length ? events.slice(0,40).map(e =>
       `<div class="clock"><div class="cn">${e.label}${e.failed?' <span class="badge" style="background:var(--bad);color:#fff">failed</span>'
@@ -4581,7 +4593,7 @@ async function loadBring(x){
     const guid = String(x.attrs.GlobalID).replace(/[{}]/g,"");
     const fs = await layers.issues.queryFeatures({
       where:`asset_guid='{${guid}}' AND issue_status IN ('open','in_progress')`,
-      outFields:["OBJECTID","issue_severity","issue_desc","parts_needed","reported_by","reported_date"],
+      outFields:["OBJECTID","GlobalID","issue_severity","issue_desc","parts_needed","reported_by","reported_date"],
       orderByFields:["reported_date DESC"], num:200});
     if (x.attrs.equipment_id !== selected) return;  // user moved on mid-query
     const items = fs.features.map(f => f.attributes);
@@ -4618,7 +4630,8 @@ async function loadBring(x){
       if (document.getElementById("issres_" + oid)) return;
       l.closest("[data-iss]").insertAdjacentHTML("afterend", `<div class="issres" id="issres_${oid}">
         <input type="text" maxlength="500" placeholder="What was done to fix it (required)">
-        <button class="btn red">Mark resolved</button><button class="btn gray">Cancel</button></div>`);
+        <button class="btn red">Mark resolved</button><button class="btn gray">Cancel</button>
+        <label class="cd" style="flex-basis:100%;display:flex;gap:6px;align-items:center"><input type="checkbox" class="issRcChk"> Add a receipt for this next (parts, supplies or shop work)</label></div>`);
       const box = document.getElementById("issres_" + oid), inp = box.querySelector("input"),
             ok = box.querySelector(".btn.red");
       box.scrollIntoView({block:"center", behavior:"smooth"});
@@ -4628,6 +4641,8 @@ async function loadBring(x){
         const note = inp.value.trim();
         if (!note) return toast("Say what was done to fix it");
         ok.disabled = true; ok.innerHTML = '<span class="bspin"></span>Saving…';
+        const wantRc = box.querySelector(".issRcChk").checked, i0 = items.find(i => i.OBJECTID === oid) || {};
+        const rcFor = {gid: i0.GlobalID, desc: stripTags(i0.issue_desc).slice(0, 80), note};
         try {
           const sentR = await submitJob({what: `Resolve issue — ${x.attrs.equipment_id}`, eid: x.attrs.equipment_id, ts: Date.now(),
             steps: [{op:"update", layer:"issues", attrs:{OBJECTID: oid,
@@ -4637,6 +4652,7 @@ async function loadBring(x){
           if (sentR === "pending"){
             box.remove();
             l.closest("[data-iss]").outerHTML = `<div class="issdone">&#8682; Resolved on this phone — waiting to send (no signal).</div>`;
+            if (wantRc) openReceiptForm(rcFor);
             return;
           }
           // confirm in place with Undo instead of the row just vanishing (persona 2)
@@ -4647,6 +4663,7 @@ async function loadBring(x){
             — <a href="#" style="color:var(--deployed);font-weight:700">Undo</a></div>`;
           const dn = document.getElementById("issdone_" + oid);
           let undone = false;
+          if (wantRc) openReceiptForm(rcFor);
           dn.querySelector("a").onclick = async ev2 => {
             ev2.preventDefault(); if (undone) return; undone = true;
             dn.innerHTML = '<span class="bspin"></span>Undoing…';
@@ -4672,6 +4689,140 @@ async function loadBring(x){
       $("dClocks").insertAdjacentHTML("beforeend", `<div class="cd" id="dHoldNote" style="color:var(--bad);padding:4px 0">
         The inventory audit due date won't move until the ${crit.length} critical problem(s) above are fixed and resolved.</div>`);
   } catch(e){ console.error(e); }
+}
+
+// ---- Receipts (2026-11-13): the trailer's own record of what was bought or paid to
+// keep it ready — a photo of the receipt plus hand-typed fields, in table 15
+// `repair_receipts`. History only (Cody): not reimbursement, no AI reading, and no
+// link to any contractor's own receipt app. Everyone signed in can see them.
+// Goes through the outbox like the other forms, so it waits when there is no signal.
+const money = n => n == null || isNaN(n) ? "—"
+  : "$" + Number(n).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+const RC_CATS = [["parts","Parts"],["supplies","Supplies"],["labor","Labor / shop work"],["other","Other"]];
+const rcCat = v => (RC_CATS.find(c => c[0] === v) || [0, v || ""])[1];
+window.openReceiptForm = async issue => {     // issue = {gid, desc, note} when it comes from a resolved repair
+  const x = byId[selected]; if (!x) return;
+  const a = x.attrs, ag = String(a.GlobalID).replace(/[{}]/g,"");
+  openOverlay("Add receipt — " + a.equipment_id, {html:""});
+  let open = [];
+  try { open = (await layers.issues.queryFeatures({where:`asset_guid='{${ag}}' AND issue_status IN ('open','in_progress')`,
+      outFields:["GlobalID","issue_desc"], orderByFields:["reported_date DESC"], num:100})).features.map(f => f.attributes); }
+  catch(e){ console.warn(e); }
+  const gN = v => String(v || "").replace(/[{}]/g, "").toLowerCase();
+  const opts = (issue && issue.gid ? [[issue.gid, issue.desc + " (just resolved)"]] : [])
+    .concat(open.filter(i => !issue || gN(i.GlobalID) !== gN(issue.gid)).map(i => [i.GlobalID, stripTags(i.issue_desc)]));
+  const tdy = localISO(new Date());
+  $("oBody").innerHTML = `
+    <div class="cd" style="margin-bottom:10px">A record of what was bought or paid to keep this trailer ready. It stays in
+      the trailer's history, and everyone signed in can see it. It is not a reimbursement claim.</div>
+    <div style="font-size:12.5px;color:var(--text-dim);margin:4px 0">Photo of the receipt (required)</div>
+    <input id="rcFile" type="file" class="nfin" accept="image/*,.pdf">
+    <input id="rcAmt" type="text" inputmode="decimal" class="nfin" maxlength="14" placeholder="Amount in dollars, e.g. 84.50 (required)">
+    <input id="rcVendor" type="text" class="nfin" maxlength="128" placeholder="Where it was bought / who did the work (required)">
+    <div style="font-size:12.5px;color:var(--text-dim);margin:4px 0">Date on the receipt</div>
+    <input id="rcDate" type="date" class="nfin" value="${tdy}" max="${tdy}">
+    <select id="rcCat" class="nfin">${RC_CATS.map(c => `<option value="${c[0]}">${c[1]}</option>`).join("")}</select>
+    <select id="rcIssue" class="nfin"><option value="">Not for a listed repair</option>${opts.map(o =>
+      `<option value="${escA(o[0])}">For: ${esc(String(o[1]).slice(0, 70))}</option>`).join("")}</select>
+    <textarea id="rcDesc" class="nfin" maxlength="500" placeholder="What it was for (required)" style="min-height:60px"></textarea>
+    ${nfInput("rcWho","Your name",1)}
+    <button class="btn red" id="rcSubmit" style="width:100%;margin:10px 0">Save receipt</button>`;
+  if (issue && issue.gid){ $("rcIssue").value = issue.gid; $("rcDesc").value = (issue.note || issue.desc || "").slice(0, 500); }
+  const rid = "rc-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);   // one id for every retry
+  $("rcSubmit").onclick = async () => {
+    const f = $("rcFile").files[0], amt = parseFloat($("rcAmt").value.replace(/[$,\s]/g, "")),
+          vendor = $("rcVendor").value.trim(), desc = $("rcDesc").value.trim(), who = $("rcWho").value.trim(), dv = $("rcDate").value;
+    if (!f){ nag($("rcFile")); return toast("Add a photo of the receipt"); }
+    if (!(amt > 0) || amt > 1e7 || !/^\$?[\d,]*\.?\d{0,2}$/.test($("rcAmt").value.trim())){ nag($("rcAmt")); return toast("Enter the amount in dollars, like 84.50"); }
+    if (!vendor){ nag($("rcVendor")); return toast("Say where it was bought or who did the work"); }
+    if (!dv || dv > tdy){ nag($("rcDate")); return toast("Set the date on the receipt (today or earlier)"); }
+    if (!desc){ nag($("rcDesc")); return toast("Say what it was for"); }
+    if (!who){ nag($("rcWho")); return toast("Your name is required"); }
+    const btn = $("rcSubmit"); btn.disabled = true; btn.innerHTML = '<span class="bspin"></span>Saving…';
+    try {
+      // shrink a photo before it goes up (a phone picture is 5-10 MB); a PDF goes as it is
+      let file = f, name = f.name || "receipt.jpg";
+      if (/^image\//.test(f.type || "") || /\.(jpe?g|png|heic|webp)$/i.test(name)) try {
+        const im = await svImgOf(f), k = Math.min(1, 1600 / Math.max(im.naturalWidth, im.naturalHeight));
+        file = await svJpeg(im, Math.round(im.naturalWidth * k), Math.round(im.naturalHeight * k), 0.8);
+        URL.revokeObjectURL(im._url); name = "receipt.jpg";
+      } catch(e){ console.warn("receipt photo sent as taken:", e.message); }
+      if (file.size > 9.5e6) throw new Error("that file is over 10 MB — take a photo of the receipt instead");
+      const ts = Date.now();
+      const attrs = {asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id, issue_guid: $("rcIssue").value || null,
+        receipt_id: rid, receipt_date: new Date(dv + "T12:00:00").getTime(), vendor, amount: Math.round(amt * 100) / 100,
+        category: $("rcCat").value, description: desc, submitted_by: who,
+        app_version: "viewer-rcpt-1", source_device: "browser"};
+      const sent = await submitJob({what: `Receipt ${money(attrs.amount)} — ${a.equipment_id}`, eid: a.equipment_id, ts,
+        steps: [{op:"add", layer:"receipts", attrs, lookup:`receipt_id='${rid}'`},
+                {op:"attach", lid: 15, parent: 0, file, name}]});
+      toast(sent === "pending" ? PENDING_MSG : `Receipt saved — ${money(attrs.amount)}, ${vendor}`);
+      ovDepth > 1 ? history.back() : closeOverlay(false);
+      if (a.equipment_id === selected){ loadReceipts(x); loadHistory(x); }
+    } catch(e){ console.error(e); toast("Couldn't save the receipt: " + (e.message || e));
+      btn.disabled = false; btn.textContent = "Save receipt"; }
+  };
+};
+async function loadReceipts(x){
+  const host = $("dRcpt"); if (!host) return;
+  host.textContent = "Loading…";
+  try {
+    const id = x.attrs.equipment_id, guid = String(x.attrs.GlobalID).replace(/[{}]/g,"");
+    const rows = (await layers.receipts.queryFeatures({where:`asset_guid='{${guid}}'`, outFields:["*"],
+      orderByFields:["receipt_date DESC"], num:500})).features.map(f => f.attributes);
+    if (id !== selected) return;
+    const admin = window.isAdmin && window.viewMode === "admin";
+    const waiting = outFor(id).filter(j => /^Receipt /.test(j.what)).length;
+    const wait = waiting ? `<div class="cd" style="margin-top:4px">&#8682; ${waiting} receipt${waiting > 1 ? "s" : ""} on this phone waiting to send.</div>` : "";
+    const csv = admin ? ` · <a href="#" id="rcCsv" style="color:var(--deployed);font-weight:600">All receipts (CSV)</a>` : "";
+    if (!rows.length)
+      host.innerHTML = `<span style="color:var(--text-muted)">No receipts on record</span>${csv}${wait}`;
+    else {
+      let att = {}, tok = "";
+      if (!isOff()) try {
+        [att, tok] = await Promise.all([layers.receipts.queryAttachments({objectIds: rows.map(r => r.OBJECTID)}),
+                                        esriId.getCredential(PORTAL + "/sharing").then(c => c.token)]);
+      } catch(e){ console.warn("receipt photos unavailable", e); att = {}; }
+      if (id !== selected) return;
+      const total = rows.reduce((t, r) => t + (r.amount || 0), 0);
+      host.innerHTML = `<div class="cd" style="margin-bottom:4px">${rows.length} receipt${rows.length > 1 ? "s" : ""} · ${money(total)} total${csv}</div>` +
+        rows.map(r => { const at = (att[r.OBJECTID] || [])[0];
+          return `<div class="clock" data-rc="${r.OBJECTID}"><div class="cn">${esc(r.vendor || "")} — <b>${money(r.amount)}</b>
+            <span class="badge" style="background:var(--surface-alt);border:1px solid var(--border)">${esc(rcCat(r.category))}</span>
+            <div class="cd">${esc(r.description || "")}</div>
+            <div class="cd">${r.submitted_by ? esc(r.submitted_by) + " · " : ""}${at
+              ? `<a href="${SVC}/15/${r.OBJECTID}/attachments/${at.id}?token=${tok}" target="_blank" rel="noopener" style="color:var(--deployed);font-weight:600">View receipt</a>`
+              : isOff() ? "photo shows when you have signal" : "no photo attached"}</div></div>
+            <div class="cd" style="text-align:right;flex:none">${fmtDate(r.receipt_date)}${admin
+              ? `<br><button class="btn gray" data-rcdel="${r.OBJECTID}" style="margin-top:4px">Delete</button>` : ""}</div></div>`; }).join("") + wait;
+      host.querySelectorAll("[data-rcdel]").forEach(b => b.onclick = async () => {
+        const r = rows.find(q => q.OBJECTID === +b.dataset.rcdel);
+        if (!confirm(`Delete the ${money(r.amount)} receipt from ${r.vendor || "this vendor"}? Its photo goes too.`)) return;
+        b.disabled = true; b.innerHTML = '<span class="bspin"></span>';
+        try {
+          const d = await layers.receipts.applyEdits({deleteFeatures:[{objectId: r.OBJECTID}]});
+          const d0 = (d.deleteFeatureResults || [])[0];
+          if (!d0 || d0.error) throw new Error(d0 && d0.error ? d0.error.message : "not accepted");
+          toast("Receipt deleted"); loadReceipts(x); loadHistory(x);
+        } catch(e){ console.error(e); toast("Couldn't delete it: " + (e.message || e)); b.disabled = false; b.textContent = "Delete"; }
+      });
+    }
+    if ($("rcCsv")) $("rcCsv").onclick = async ev => {
+      ev.preventDefault(); const l = $("rcCsv"); if (l.dataset.busy) return;
+      l.dataset.busy = 1; l.innerHTML = '<span class="bspin"></span>Preparing…';
+      try {
+        const all = await qPage(layers.receipts, "1=1", ["asset_equipment_id","receipt_date","vendor","amount","category",
+          "description","submitted_by","issue_guid","created_by","created_date"], ["asset_equipment_id","receipt_date"]);
+        downloadCSV(`bnsf-trailer-receipts-${today()}.csv`, [["Asset ID","Contractor","Receipt date","Vendor","Amount","Category",
+          "What it was for","For a listed repair","Submitted by","Entered by (login)","Entered on"]].concat(all.map(r => [
+          r.asset_equipment_id, ((byId[r.asset_equipment_id] || {}).attrs || {}).contractor_name || "",
+          r.receipt_date ? localISO(new Date(r.receipt_date)) : "", r.vendor, r.amount, rcCat(r.category), r.description,
+          r.issue_guid ? "yes" : "no", r.submitted_by, r.created_by, r.created_date ? localISO(new Date(r.created_date)) : ""])));
+        toast(`${all.length} receipt${all.length === 1 ? "" : "s"} exported`);
+      } catch(e){ console.error(e); toast("Export failed: " + (e.message || e)); }
+      delete l.dataset.busy; l.textContent = "All receipts (CSV)";
+    };
+  } catch(e){ console.error(e); host.textContent = isOff() ? "Receipts show when you have signal." : "Receipts unavailable"; }
 }
 
 // ---- Site views (2026-11-13): orientation images of the SITE this asset sits at —
