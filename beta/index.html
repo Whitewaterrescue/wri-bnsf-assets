@@ -274,6 +274,10 @@
   .svhint{font-size:12px;color:#bbb}
   .svspin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:sp 1s linear infinite;margin-right:6px;vertical-align:-1px}
   #svStrip{flex:none;display:flex;gap:6px;overflow-x:auto;padding:6px 10px calc(6px + env(safe-area-inset-bottom));background:#111}
+  .svadd{margin-top:8px;padding:10px;border:1px dashed var(--border);border-radius:8px}
+  .svadd .btns{padding:4px 0 0}
+  #sv.editing #svDel{display:none}
+  #sv .svhd #svDel{padding:9px 10px}
   #bugModal{position:fixed;inset:0;z-index:97;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:16px}
   #bugModal.open{display:flex}
   #bugModal .bm{background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;padding:14px}
@@ -398,6 +402,7 @@
     <div id="svTitle"></div>
     <span id="svCount"></span>
     <button id="svEdit" style="display:none">Annotate</button>
+    <button id="svDel" style="display:none" aria-label="Remove this picture" title="Remove this picture">&#128465;</button>
   </div>
   <div id="svStage">
     <img id="svImg" alt="" draggable="false">
@@ -544,7 +549,7 @@ const draftDel = k => draftOp("readwrite", st => st.delete(k)).catch(() => {});
 // sends itself later. Each step records that it reached the server, and an
 // add that may have saved before its reply was lost is looked up (on the
 // server, never the saved copy) before it is tried again — no duplicates.
-//   steps: {op:"add", layer, attrs, lookup}  {op:"children", layer, parent, rows}
+//   steps: {op:"add", layer, attrs, lookup, link?}  {op:"children", layer, parent, rows}
 //          {op:"update", layer, attrs}       {op:"attach", lid, parent, file, name}
 const tsSql = ms => "TIMESTAMP '" + new Date(ms).toISOString().slice(0,19).replace("T"," ") + "'";
 const tsWindow = (fld, ts) => `${fld} >= ${tsSql(ts)} AND ${fld} <= ${tsSql(ts + 1000)}`;
@@ -574,7 +579,10 @@ async function runJob(job){
         const f = (await L.__q({where: st.lookup, outFields:["OBJECTID","GlobalID"], num:1})).features[0];
         if (f) res = {objectId: f.attributes.OBJECTID, globalId: f.attributes.GlobalID};
       }
-      if (!res){ job.tried[i] = 1; await draftPut("out:" + job.id, job); res = await addRow(L, Object.assign({}, st.attrs)); }
+      if (!res){ job.tried[i] = 1; await draftPut("out:" + job.id, job);
+        const at = Object.assign({}, st.attrs);
+        if (st.link) at[st.link.field] = job.out[st.link.parent].gid;   // e.g. an issue -> the inspection that found it
+        res = await addRow(L, at); }
       job.out[i] = {oid: res.objectId, gid: "{" + String(res.globalId).replace(/[{}]/g, "") + "}"};
     } else if (st.op === "children"){
       const pg = job.out[st.parent].gid;
@@ -3473,26 +3481,46 @@ window.openNativeDOT = () => {
      <div class="invcat">Condition checklist</div>` +
     CONDS.map((c, i) => `<div class="taskrow"><div class="tlab">${c[1]}</div>
       <select data-ci="${i}"><option value="ok">OK</option><option value="needs_repair">Needs Repair</option>
-        <option value="na">N/A</option></select></div>`).join("") +
+        <option value="na">N/A</option></select>
+      <input type="text" data-cn="${i}" maxlength="200" placeholder="What is wrong / what it needs"></div>`).join("") +
     nfInput("dtTire","Tire DOT date codes (comma-separated)") +
     `<textarea id="dtDmg" class="nfin" placeholder="Exterior damage notes (B=Bruise C=Cut H=Hole D=Dent M=Missing)" style="min-height:60px"></textarea>
      <div style="font-size:13.5px;margin:4px 0">Result</div>
      <select id="dtRes" class="nfin"><option value="">— select —</option>${resOpts.map(o =>
        `<option value="${o[0]}">${o[1]}</option>`).join("")}</select>
+     <div id="dtResHint" class="cd" style="margin:-2px 0 6px"></div>
      <textarea id="dtNotes" class="nfin" placeholder="Notes" style="min-height:60px"></textarea>
      <div style="font-size:12.5px;color:var(--text-dim);margin:4px 0">Attach signed FMCSA / DOT PDF or photo (optional)</div>
      <input id="dtFile" type="file" class="nfin" accept=".pdf,image/*">
      <button class="btn red" id="dtSubmit" style="width:100%;margin:10px 0">Submit inspection</button>`;
+  const dtNeeds = () => [...$("oBody").querySelectorAll("[data-ci]")].filter(sel => sel.value === "needs_repair")
+    .map(sel => ({c: CONDS[+sel.dataset.ci], note: $("oBody").querySelector(`[data-cn="${sel.dataset.ci}"]`).value.trim()}));
+  const dtHint = () => { const n = dtNeeds().length, r = $("dtRes").value;
+    $("dtResHint").innerHTML = n ? `${n} item${n > 1 ? "s" : ""} marked Needs Repair — each one opens a repair to track on this trailer.
+        <b>Fail</b> = not safe to tow until repaired (opens them as critical).`
+      : (r === "fail" || r === "pass_with_issues") ? "Say what the issue is in Notes — it opens a repair to track." : ""; };
   $("oBody").onchange = e => {
-    if (e.target.dataset.ci !== undefined)
-      e.target.classList.toggle("failed", e.target.value === "needs_repair");
+    if (e.target.dataset.ci !== undefined){
+      const bad = e.target.value === "needs_repair";
+      e.target.classList.toggle("failed", bad);
+      e.target.closest(".taskrow").classList.toggle("failed", bad);   // shows the "what is wrong" box
+      // a repair on the list can't be a clean Pass (Ben 2026-11-13)
+      if (bad && ["", "pass", "na"].includes($("dtRes").value)) $("dtRes").value = "pass_with_issues";
+    }
+    dtHint();
   };
   $("dtSubmit").onclick = async () => {
     const who = $("dtWho").value.trim();
     if (!who) return toast("Inspector name is required");
     const res = $("dtRes").value;
     if (!res) return toast("Select a result");
-    $("dtSubmit").disabled = true; $("dtSubmit").textContent = "Submitting…";
+    const needs = dtNeeds();
+    const why = $("dtNotes").value.trim() || $("dtDmg").value.trim();
+    if (needs.length && (res === "pass" || res === "na")){ nag($("dtRes"));
+      return toast(`${needs.length} item(s) are marked Needs Repair — choose Pass with issues or Fail`); }
+    if (!needs.length && (res === "fail" || res === "pass_with_issues") && !why){ nag($("dtNotes"));
+      return toast("Say what the issue is in Notes, or mark the item Needs Repair"); }
+    $("dtSubmit").disabled = true; $("dtSubmit").innerHTML = '<span class="bspin"></span>Submitting…';
     try {
       const attrs = {asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id,
         insp_type: $("dtType").value, insp_status: "completed", insp_result: res,
@@ -3502,16 +3530,52 @@ window.openNativeDOT = () => {
         tire_dot_codes: $("dtTire").value.trim().slice(0,128) || null,
         damage_notes: $("dtDmg").value.trim().slice(0,1000) || null,
         insp_notes: $("dtNotes").value.trim().slice(0,1000) || null,
-        app_version: "viewer-dot-v3", source_device: "browser"};
+        app_version: "viewer-dot-v4", source_device: "browser"};
       $("oBody").querySelectorAll("[data-ci]").forEach(s => attrs[CONDS[+s.dataset.ci][0]] = s.value);
       const ts = Math.floor(Date.now() / 1000) * 1000; attrs.insp_date = ts;
       const f = $("dtFile").files[0];
+      const ag = String(a.GlobalID).replace(/[{}]/g,"");
+      const typeLbl = $("dtType").selectedOptions[0].textContent;
       const steps = [{op:"add", layer:"insp", attrs,
-        lookup:`asset_guid='{${String(a.GlobalID).replace(/[{}]/g,"")}}' AND insp_type='${attrs.insp_type}' AND ${tsWindow("insp_date", ts)}`}];
+        lookup:`asset_guid='{${ag}}' AND insp_type='${attrs.insp_type}' AND ${tsWindow("insp_date", ts)}`}];
+      // every Needs Repair item (or a Fail / Pass-with-issues explained in Notes) opens a
+      // repair: an issue on this trailer, tagged [dot <field>], closed with Resolve.
+      // Each gets its own second so a retry finds it again and never adds it twice.
+      const sev = res === "fail" ? "critical" : "major";
+      const repairs = needs.map(r => ({tag: r.c[0], txt: `${r.c[1]}: needs repair${r.note ? " — " + r.note : ""}`}));
+      if (!needs.length && (res === "fail" || res === "pass_with_issues"))
+        repairs.push({tag: "result", txt: `${res === "fail" ? "Failed" : "Passed with issues"}: ${why}`});
+      repairs.forEach((r, n) => { const rd = ts + (n + 1) * 2000;
+        steps.push({op:"add", layer:"issues", link:{field:"source_guid", parent:0},
+          lookup:`asset_guid='{${ag}}' AND source_type='inspection' AND ${tsWindow("reported_date", rd)}`,
+          attrs:{asset_guid: a.GlobalID, asset_equipment_id: a.equipment_id, issue_status:"open", issue_severity: sev,
+            issue_desc: `${typeLbl} — ${r.txt} [dot ${r.tag}]`.slice(0,1000), reported_by: who, reported_date: rd,
+            source_type:"inspection", app_version:"viewer-dot-v4", source_device:"browser"}}); });
       if (f) steps.push({op:"attach", lid: 2, parent: 0, file: f, name: f.name});
-      const sent = await submitJob({what: `${$("dtType").selectedOptions[0].textContent} — ${a.equipment_id}`, eid: a.equipment_id, ts, steps});
-      toast(sent === "pending" ? PENDING_MSG : "Inspection submitted — " + res.replace(/_/g, " "));
-      afterSubmitToGuide();
+      const sent = await submitJob({what: `${typeLbl} — ${a.equipment_id}`, eid: a.equipment_id, ts, steps});
+      openIssues = null;  // stats cache stale
+      if (sent !== "pending") try { await processAssetAudit(x); } catch(pe){ console.warn(pe); }
+      else loadBring(x);
+      // a receipt, like the audit's: the result and exactly what was opened
+      const sched = {dot_annual:"dot_inspection", bit_annual:"bit_inspection"}[attrs.insp_type];
+      const dc = sched && x.clocks.find(c => c.sched_type === sched && !c._via);
+      const tone = res === "fail" ? "var(--bad)" : res === "pass_with_issues" ? "var(--warn)" : "";
+      $("oBody").onchange = null;
+      $("oBody").innerHTML = `
+        <div class="okbox" id="dtReceipt" style="${tone ? `border-color:${tone};background:color-mix(in srgb, ${tone} 12%, transparent)` : ""}">
+          <b style="font-size:16px">${sent === "pending" ? "&#8682; Saved on this phone — waiting to send" : "&#10003; Inspection saved"}
+            — ${res === "na" ? "N/A" : verdictBadge(res).replace(" — critical deficiencies", "")}</b><br>
+          ${esc(typeLbl)} · ${esc(a.equipment_id)} · ${new Date(ts).toLocaleString([], {month:"short", day:"numeric", year:"numeric", hour:"numeric", minute:"2-digit"})}
+          ${repairs.length ? `<div style="margin-top:8px"><b>${repairs.length} repair${repairs.length > 1 ? "s" : ""} opened${sev === "critical" ? " (critical)" : ""}:</b>
+            <ul style="margin:4px 0 6px 18px;padding:0">${repairs.map(r => `<li>${esc(r.txt)}</li>`).join("")}</ul>
+            They stay on this trailer under <b>Notes &amp; what to bring</b> until someone taps <b>Resolve</b> and says what was done.</div>` : ""}
+          ${sent === "pending" ? `<br>${PENDING_MSG}`
+            : res === "fail" ? `<br>A failed inspection does not move the due date. Repair it, then inspect again.`
+            : dc && dc.due_date ? `<br>Next ${esc(tlabel(sched))} due <b>${fmtDate(dc.due_date)}</b>.` : ""}
+          <div class="cd" style="margin-top:6px">Need proof? Take a screenshot of this screen.</div></div>
+        <button class="btn gray" id="dtDone" style="width:100%;margin:8px 0 14px">Done</button>`;
+      $("oBody").scrollTop = 0;
+      $("dtDone").onclick = () => afterSubmitToGuide();
     } catch(e){ console.error(e); toast("Submit failed: " + (e.message||e));
       $("dtSubmit").disabled = false; $("dtSubmit").textContent = "Submit inspection"; }
   };
@@ -4051,6 +4115,24 @@ window.openNativeAudit = async () => {
         const ac = x.clocks.find(c => c.sched_type === "audit_inventory" && !c._via);
         const moved = ac && g8s(ac.completed_by_guid) === g8s(sub.pguid);
         const complete = ac ? moved : nc === 0;
+        // what this audit recorded, critical first — the receipt names each one
+        const diffs = [];
+        $("oBody").querySelectorAll(".aq").forEach(inp => {
+          if (inp.closest(".audrow").classList.contains("binhid")) return;
+          const i = +inp.dataset.i, b = items[i], exp = b.expected_qty ?? 1, v = parseFloat(inp.value);
+          const cond = document.getElementById("ac" + i).value, note = document.getElementById("an" + i).value.trim();
+          if (isNaN(v) || (v === exp && cond === "good" && !note)) return;
+          diffs.push({crit: critOf(i) && v < threshOf(i),
+            txt: `${b.item_desc}: counted ${v} of ${exp}${cond !== "good" ? ` (${cond})` : ""}${note ? " — " + note : ""}`});
+        });
+        diffs.sort((p, q) => q.crit - p.crit);
+        // not complete with nothing critical on THIS count = older critical problems hold it
+        let oldCrit = [];
+        if (!complete && !nc) try {
+          oldCrit = (await layers.issues.queryFeatures({where:`asset_guid='{${guid}}' AND issue_status IN ('open','in_progress') AND issue_severity='critical' AND source_type='audit'`,
+            outFields:["issue_desc"], num:50})).features.map(f => stripTags(f.attributes.issue_desc));
+        } catch(qe){ console.warn(qe); }
+        const ul = arr => `<ul style="margin:4px 0 6px 18px;padding:0">${arr.join("")}</ul>`;
         // result screen: stays up until the inspector taps Done
         const formEls = [...$("oBody").children];
         formEls.forEach(c => c.style.display = "none");
@@ -4064,10 +4146,15 @@ window.openNativeAudit = async () => {
             ${result === "pass" ? "Everything on the list was there."
               : `${nd} difference${nd === 1 ? "" : "s"} from the list${nc ? ` (<b style="color:var(--bad)">${nc} critical</b>)` : ""} —
                  ${nd === 1 ? "1 issue" : nd + " issues"} opened for follow-up.`}
+            ${diffs.length ? `<div id="audDiffs" style="margin-top:6px"><b>What was recorded:</b>${ul(diffs.slice(0, 60).map(d =>
+                `<li${d.crit ? ' style="color:var(--bad);font-weight:700"' : ""}>${d.crit ? "CRITICAL — " : ""}${esc(d.txt)}</li>`))}
+                ${diffs.length > 60 ? `…and ${diffs.length - 60} more (all saved).` : ""}</div>` : ""}
             ${newbies.length ? `<br>${newbies.length} new item(s) added to this trailer's list.` : ""}
             ${complete && ac ? `<br>Next inventory audit due <b>${fmtDate(ac.due_date)}</b>.`
-              : !complete ? `<br><b>Why not complete:</b> ${nc ? nc + " critical item(s) short" : "critical problems are still open on this trailer"}.
-                 The audit due date moves once they're replaced and recorded on a fix visit (audit page → Record a fix visit).` : ""}
+              : !complete ? `<br><b>Why not complete:</b> ${nc ? `the ${nc} critical item${nc === 1 ? "" : "s"} in red above ${nc === 1 ? "is" : "are"} short`
+                  : oldCrit.length ? `${oldCrit.length === 1 ? "this critical problem is" : "these critical problems are"} still open on this trailer:${ul(oldCrit.map(t => `<li style="color:var(--bad)">${esc(t)}</li>`))}`
+                  : "critical problems are still open on this trailer"}.
+                 The audit due date moves once they're ${nc ? "replaced and recorded on a fix visit (audit page → Record a fix visit)" : "fixed and resolved"}.` : ""}
             <br>Photos: ${uploads.length - failed.length} of ${uploads.length} uploaded.
             <div class="cd" style="margin-top:6px">Need proof? Take a screenshot of this screen.</div></div>
           ${failed.length ? `<div class="errbox"><b>${failed.length} photo(s) did not upload</b> (${failed.join(", ")}).
@@ -4298,6 +4385,34 @@ async function processAssetAudit(x){
     }
   }
 
+  // 3c. a repair opened by a DOT / condition inspection ([dot cond_x]) closes when the
+  // NEXT such inspection marks that item OK. (Viewer only — the nightly job leaves these
+  // to Resolve.) "[dot result]" ones have no item, so they only close with Resolve.
+  const dotOpen = (await layers.issues.queryFeatures({
+    where:`asset_guid='{${aguid}}' AND source_type='inspection' AND issue_status IN ('open','in_progress')`,
+    outFields:["OBJECTID","issue_desc","issue_status","reported_date","source_guid"], num:200}))
+    .features.map(f => f.attributes).filter(i => /\[dot cond_\w+\]/.test(i.issue_desc));
+  if (dotOpen.length){
+    const fld = i => i.issue_desc.match(/\[dot (cond_\w+)\]/)[1];
+    const flds = [...new Set(dotOpen.map(fld))].filter(f => CONDS.some(c => c[0] === f));
+    const iList = flds.length ? (await layers.insp.queryFeatures({
+      where:`asset_guid='{${aguid}}' AND insp_status='completed' AND insp_type IN ('dot_annual','bit_annual','condition')`,
+      outFields:["GlobalID","insp_date","inspector_name"].concat(flds), orderByFields:["insp_date DESC"], num:20}))
+      .features.map(f => f.attributes) : [];
+    dotOpen.forEach(i => {
+      // "after" = after the inspection that opened it (its repairs are stamped a few seconds later)
+      const gN = v => String(v || "").replace(/[{}]/g, "").toLowerCase();
+      const src = iList.find(r => gN(r.GlobalID) === gN(i.source_guid));
+      const after = src ? (src.insp_date || 0) : (i.reported_date || 0);
+      const next = iList.find(r => (r.insp_date || 0) > after);   // newest first
+      if (!next || next[fld(i)] !== "ok") return;
+      closes.push({attributes:{OBJECTID:i.OBJECTID, issue_status:"resolved", resolved_date: next.insp_date,
+        resolved_by: String(next.inspector_name || "").slice(0, 64),
+        resolution_notes: `Marked OK on the ${fmtDate(next.insp_date)} inspection`}});
+      i.issue_status = "resolved";
+    });
+  }
+
   // 4. clean maintenance re-run closes that unit's failure issues
   const lastClean = {};
   events.forEach(e => { if (!evFailed[g8s(e.GlobalID)]){
@@ -4395,7 +4510,7 @@ async function loadHistory(x){
     const guid = String(x.attrs.GlobalID).replace(/[{}]/g,"");
     const events = [];
     const inspFs = await layers.insp.queryFeatures({where:`asset_guid='{${guid}}'`,
-        outFields:["insp_type","insp_status","insp_date","inspector_name","insp_notes"],
+        outFields:["insp_type","insp_status","insp_date","inspector_name","insp_notes","insp_result"],
         orderByFields:["insp_date DESC"], num:200});
     inspFs.features.forEach(f => { const a=f.attributes;
       const lbl = tlabel(a.insp_type);
@@ -4403,7 +4518,8 @@ async function loadHistory(x){
       events.push({when:a.insp_date,
                    label:(a.insp_type==="other" && migrated ? a.insp_notes.replace(" (migrated from platform)","") : lbl),
                    note: !migrated && a.insp_notes ? prettyNote(a.insp_notes) : null,
-                   who:a.inspector_name, issues:a.insp_status==="completed_issues", kind:"Inspection"});
+                   who:a.inspector_name, failed:a.insp_result==="fail",
+                   issues:a.insp_status==="completed_issues" || a.insp_result==="pass_with_issues", kind:"Inspection"});
     });
     const eqGuids = x.equip.map(e => "'{"+String(e.GlobalID).replace(/[{}]/g,"")+"}'");
     const eqKind = Object.fromEntries(x.equip.map(e => [e.equip_id, SURVEY_TITLES[maintKind(e.equip_type)]]));
@@ -4440,7 +4556,8 @@ async function loadHistory(x){
                      note:a.resolution_notes, who:a.resolved_by, kind:"Issue"}); });
     events.sort((p,q) => (q.when||0)-(p.when||0));
     host.innerHTML = events.length ? events.slice(0,40).map(e =>
-      `<div class="clock"><div class="cn">${e.label}${e.issues?' <span class="badge" style="background:var(--warn);color:#0a0c10">issues</span>':""}
+      `<div class="clock"><div class="cn">${e.label}${e.failed?' <span class="badge" style="background:var(--bad);color:#fff">failed</span>'
+          :e.issues?' <span class="badge" style="background:var(--warn);color:#0a0c10">passed with issues</span>':""}
        ${e.note?`<div class="cd">${esc(String(e.note).slice(0,110))}</div>`:""}
        ${e.who?`<div class="cd">${esc(e.who)}</div>`:""}</div><div class="cd" style="text-align:right;flex:none">${fmtWhen(e.when)}</div></div>`).join("")
       + (events.length>40?`<div class="cd" style="padding-top:6px">…and ${events.length-40} older records</div>`:"")
@@ -4449,7 +4566,7 @@ async function loadHistory(x){
 }
 
 // ---- Notes & what to bring: open issues split critical / bring-next-time ----
-const stripTags = d => String(d||"").replace(/\s*\[(item|audit|maint)[^\]]*\]/g,"").replace(/^\[CRITICAL\]\s*/,"");
+const stripTags = d => String(d||"").replace(/\s*\[(item|audit|maint|dot)[^\]]*\]/g,"").replace(/^\[CRITICAL\]\s*/,"");
 // history notes in plain words: field names -> labels, internal tags out
 const prettyNote = n => stripTags(String(n)
   .replace(/\[updated: ([^\]]+)\]/, (m, list) => "— updated " + list.split(/,\s*/).map(f => {
@@ -4484,8 +4601,11 @@ async function loadBring(x){
     let html = notes ? `<div style="margin-bottom:8px">${esc(notes)}</div>` : "";
     if (crit.length)
       html += hdr("Critical — resolve urgently", "var(--bad)") + crit.map(i => row(i, "var(--bad)")).join("");
-    if (rest.length)
-      html += hdr("What to bring next time", "var(--warn)") + rest.map(i => row(i, "var(--warn)")).join("");
+    const reps = rest.filter(i => /\[dot /.test(i.issue_desc)), bring = rest.filter(i => !/\[dot /.test(i.issue_desc));
+    if (reps.length)
+      html += hdr(`Repairs needed — from an inspection (${reps.length})`, "var(--warn)") + reps.map(i => row(i, "var(--warn)")).join("");
+    if (bring.length)
+      html += hdr("What to bring next time", "var(--warn)") + bring.map(i => row(i, "var(--warn)")).join("");
     if (!items.length)
       html += hdr("What to bring next time", "var(--warn)") +
         `<div style="color:var(--text-muted)">No open issues — nothing extra to bring.</div>`;
@@ -4620,6 +4740,7 @@ function svMatch(x, rows){
       if (d <= best){ best = d; key = keyOf(r.site_key); } });
   }
   if (key) rows.filter(r => keyOf(r.site_key) === key).forEach(r => out.add(r));
+  x._svSite = key ? rows.find(r => keyOf(r.site_key) === key) : null;   // a row of this asset's site (Add reuses its key/name)
   return [...out].sort((p, q) => (p.sort_order || 0) - (q.sort_order || 0) || p.OBJECTID - q.OBJECTID);
 }
 async function loadSiteViews(x){
@@ -4633,16 +4754,153 @@ async function loadSiteViews(x){
     const tok = await svTok();
     if (x.attrs.equipment_id !== selected) return;
     const ok = list.filter(r => r.att && r.att["thumb.jpg"]);
-    if (!ok.length){
-      host.innerHTML = `<span style="color:var(--text-muted)">No site views for this location yet</span>`;
-      return;
+    const addBtn = (window.isAdmin && window.viewMode === "admin")
+      ? `<div style="margin-top:8px"><button class="btn gray" id="svAddBtn">+ Add a site picture</button></div>` : "";
+    if (!ok.length)
+      host.innerHTML = `<span style="color:var(--text-muted)">No site views for this location yet</span>` + addBtn;
+    else {
+      host.innerHTML = `<div style="margin-bottom:6px">${esc(ok[0].site_name || "")}</div><div class="svstrip">` +
+        ok.map((r, n) => `<button class="svth" data-sv="${n}" title="${escA(r.caption)}" aria-label="${escA(r.caption)}">
+          <img src="${svUrl(r, "thumb.jpg", tok)}" loading="lazy" alt="">${r.view_kind === "pano360" ? `<span class="svbadge">360°</span>` : ""}</button>`).join("") +
+        `</div><div class="cd" style="margin-top:4px">Tap a picture to open it here.${ok.some(r => r.view_kind === "pano360") ? " 360° = look around the whole site." : ""}</div>` + addBtn;
+      host.querySelectorAll("[data-sv]").forEach(b => b.onclick = () => svOpen(ok, +b.dataset.sv));
     }
-    host.innerHTML = `<div style="margin-bottom:6px">${esc(ok[0].site_name || "")}</div><div class="svstrip">` +
-      ok.map((r, n) => `<button class="svth" data-sv="${n}" title="${escA(r.caption)}" aria-label="${escA(r.caption)}">
-        <img src="${svUrl(r, "thumb.jpg", tok)}" loading="lazy" alt="">${r.view_kind === "pano360" ? `<span class="svbadge">360°</span>` : ""}</button>`).join("") +
-      `</div><div class="cd" style="margin-top:4px">Tap a picture to open it here.${ok.some(r => r.view_kind === "pano360") ? " 360° = look around the whole site." : ""}</div>`;
-    host.querySelectorAll("[data-sv]").forEach(b => b.onclick = () => svOpen(ok, +b.dataset.sv));
+    if ($("svAddBtn")) $("svAddBtn").onclick = () => svAddForm(x, ok);
   } catch(e){ console.error(e); host.textContent = "Site views unavailable"; }
+}
+
+// -- add a picture from the app (admins, needs signal). The browser makes the same
+// files the loader script does: photo = full.jpg (2048 px) + thumb.jpg; sphere =
+// pano_4096.jpg (+ pano_8192.jpg when this device can make one) + thumb.jpg.
+// thumb.jpg goes up LAST: a row without it is not listed, so a half-finished add
+// never shows. media_id is minted here once, so trying again never adds a second row.
+async function svImgOf(file){
+  const url = URL.createObjectURL(file), im = new Image();
+  try { im.src = url; await im.decode(); } catch(e){ URL.revokeObjectURL(url); throw new Error("This file isn't a picture this device can open"); }
+  im._url = url; return im;
+}
+function svJpeg(im, w, h, q){
+  return new Promise((ok, no) => {
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    const g = c.getContext("2d"), bad = () => { c.width = c.height = 0; no(new Error("too big for this device")); };
+    if (!g) return bad();
+    try { g.imageSmoothingQuality = "high"; g.drawImage(im, 0, 0, w, h);
+      if (g.getImageData(w >> 1, h >> 1, 1, 1).data[3] === 0) return bad();   // nothing drew (canvas over the phone's limit)
+    } catch(e){ return bad(); }
+    c.toBlob(b => { c.width = c.height = 0; b ? ok(b) : no(new Error("too big for this device")); }, "image/jpeg", q);
+  });
+}
+function svAddForm(x, list){
+  if ($("svAdd")) return $("svAdd").scrollIntoView({block:"center"});
+  const a = x.attrs, id = a.equipment_id, base = String(a.base_warehouse || "").trim();
+  const site = x._svSite, siteKey = site ? site.site_key : base;
+  const siteName = site ? (site.site_name || site.site_key) : base;
+  $("dSite").insertAdjacentHTML("beforeend", `<div class="svadd" id="svAdd">
+    <input type="file" id="svaFile" class="nfin" accept="image/*">
+    <div class="cd" id="svaInfo" style="margin:-2px 0 6px"></div>
+    <select id="svaKind" class="nfin"><option value="photo">Photo</option><option value="pano360">360° sphere (twice as wide as tall)</option></select>
+    <input type="text" id="svaCap" class="nfin" maxlength="128" placeholder="Caption — what the picture shows (required)">
+    <select id="svaScope" class="nfin">${siteKey ? `<option value="site">Show on every asset at ${esc(siteName)}</option>` : ""}
+      <option value="asset">Show on ${esc(id)} only</option></select>
+    <div class="btns"><button class="btn red" id="svaGo">Add picture</button><button class="btn gray" id="svaNo">Cancel</button></div>
+    <div class="cd" id="svaMsg" style="margin-top:6px"></div></div>`);
+  $("svAdd").scrollIntoView({block:"center"});
+  let im = null, job = null;     // job = the add in progress: {mid, oid, done:{name:1}}
+  const msg = (t, bad) => { $("svaMsg").innerHTML = t; $("svaMsg").style.color = bad ? "var(--bad)" : ""; };
+  const drop = () => { if (im && im._url) URL.revokeObjectURL(im._url); im = null; };
+  $("svaFile").onchange = async () => {
+    drop(); job = null; msg(""); $("svaInfo").textContent = "";
+    const f = $("svaFile").files[0]; if (!f) return;
+    try { im = await svImgOf(f);
+      const w = im.naturalWidth, h = im.naturalHeight, sphere = w >= 3000 && Math.abs(w / h - 2) < 0.05;
+      $("svaKind").value = sphere ? "pano360" : "photo";
+      $("svaInfo").textContent = `${w} × ${h} px — ${sphere ? "looks like a 360° sphere" : "photo"}`;
+    } catch(e){ msg(esc(e.message), true); }
+  };
+  $("svaNo").onclick = async () => {
+    // an add that stopped half-way leaves a hidden row: take it back out
+    if (job && job.oid) try { await svPost("applyEdits", {deletes: String(job.oid)}); } catch(e){ console.warn(e); }
+    drop(); $("svAdd").remove();
+  };
+  $("svaGo").onclick = async () => {
+    const f = $("svaFile").files[0], cap = $("svaCap").value.trim(), kind = $("svaKind").value;
+    if (!f || !im){ nag($("svaFile")); return msg("Choose a picture first.", true); }
+    if (!cap){ nag($("svaCap")); return msg("Add a caption — it is what the crew reads under the picture.", true); }
+    const w = im.naturalWidth, h = im.naturalHeight;
+    if (kind === "pano360" && Math.abs(w / h - 2) > 0.05)
+      return msg("A 360° picture has to be the full sphere: exactly twice as wide as it is tall. Add this one as a Photo.", true);
+    if (isOff()) return msg("No signal — adding a picture needs signal.", true);
+    const go = $("svaGo"), busy = t => { go.disabled = $("svaNo").disabled = true; go.innerHTML = `<span class="bspin"></span>${t}`; msg(""); };
+    try {
+      busy("Preparing…");
+      const files = [];      // [name, blob] in upload order, thumb last
+      if (kind === "photo"){
+        const k = Math.min(1, 2048 / Math.max(w, h));
+        files.push(["full.jpg", await svJpeg(im, Math.round(w * k), Math.round(h * k), 0.85)]);
+        const t = 320 / Math.max(w, h);
+        files.push(["thumb.jpg", await svJpeg(im, Math.round(w * t), Math.round(h * t), 0.8)]);
+      } else {
+        files.push(["pano_4096.jpg", await svJpeg(im, 4096, 2048, 0.85)]);
+        if (w >= 6000) try {       // the sharp copy for big screens; phones that can't make it skip it
+          let b = await svJpeg(im, 8192, 4096, 0.8);
+          if (b.size > 9.5e6) b = await svJpeg(im, 8192, 4096, 0.6);
+          if (b.size <= 9.5e6) files.push(["pano_8192.jpg", b]);
+        } catch(e){ console.warn("no 8192 copy:", e.message); }
+        files.push(["thumb.jpg", await svJpeg(im, 320, 160, 0.8)]);
+      }
+      job = job || {mid: "app-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), oid: null, done: {}};
+      if (!job.oid){
+        busy("Saving…");
+        // a lost reply may have saved the row already: look before adding
+        const had = (await svPost("query", {where:`media_id='${job.mid}'`, outFields:"OBJECTID", returnGeometry:"false"})).features || [];
+        if (had.length) job.oid = had[0].attributes.OBJECTID;
+        else {
+          const onlyThis = $("svaScope").value === "asset";
+          const ll = site && site.lat != null && !onlyThis ? [site.lat, site.lon] : (svLL(x.geom) || (site && site.lat != null ? [site.lat, site.lon] : null));
+          const order = Math.max(0, ...list.map(r => r.sort_order || 0)) + 10;
+          const feat = {attributes: {media_id: job.mid, site_key: (onlyThis ? "ASSET " + id : siteKey).slice(0, 128),
+            site_name: (siteName || id).slice(0, 128), asset_ids: onlyThis ? `|${id}|` : null, view_kind: kind,
+            caption: cap.slice(0, 128), sort_order: order, captured_date: f.lastModified || Date.now(), cam_heading: 0,
+            image_file: String(f.name || "").slice(-128), app_version: SV_APP_VERSION, source_device: "viewer"}};
+          if (ll) feat.geometry = {x: ll[1], y: ll[0], spatialReference: {wkid: 4326}};
+          const r0 = ((await svPost("applyEdits", {adds: JSON.stringify([feat])})).addResults || [])[0];
+          if (!r0 || !r0.success) throw new Error((r0 && r0.error && r0.error.description) || "the server did not accept it");
+          job.oid = r0.objectId;
+        }
+      }
+      for (let n = 0; n < files.length; n++){
+        const [name, blob] = files[n];
+        if (job.done[name]) continue;
+        busy(`Uploading ${n + 1} of ${files.length}…`);
+        await uploadAtt(14, job.oid, blob, name);
+        job.done[name] = 1;
+      }
+      drop(); SV.rows = null;
+      toast("Picture added — everyone at this site sees it now");
+      if (x.attrs.equipment_id === selected) loadSiteViews(x);
+    } catch(e){ console.error(e);
+      go.disabled = $("svaNo").disabled = false; go.textContent = job && job.oid ? "Try again" : "Add picture";
+      msg(/too big for this device/.test(e.message)
+        ? "This picture is too big for this device to prepare. Add it from a computer."
+        : "It didn't finish: " + esc(String(e.message || e).slice(0, 160)) + (job && job.oid ? " — tap Try again (it picks up where it stopped)." : ""), true);
+    }
+  };
+}
+// -- remove the picture on screen (admins): the row, its files and its labels go
+async function svRemove(){
+  const r = SV.list[SV.i]; if (!r || !(window.isAdmin && window.viewMode === "admin")) return;
+  if (isOff()) return toast("No signal — removing a picture needs signal");
+  if (!confirm(`Remove "${r.caption || "this picture"}" for everyone?\n\nThe picture and any labels drawn on it are deleted.`)) return;
+  const b = $("svDel"); b.disabled = true; b.innerHTML = '<span class="bspin" style="margin:0"></span>';
+  try {
+    const d = ((await svPost("applyEdits", {deletes: String(r.OBJECTID)})).deleteResults || [])[0];
+    if (!d || !d.success) throw new Error((d && d.error && d.error.description) || "the server did not accept it");
+    SV.rows = null; SV.list.splice(SV.i, 1);
+    toast("Picture removed");
+    if (SV.list.length) svShow(Math.min(SV.i, SV.list.length - 1)); else svClose();
+    if (byId[selected]) loadSiteViews(byId[selected]);
+  } catch(e){ console.error(e); toast("Couldn't remove it: " + (e.message || e)); }
+  b.disabled = false; b.innerHTML = "&#128465;";
 }
 
 // -- the full-screen viewer. Its height is PINNED in pixels: on iPhone the address
@@ -4672,7 +4930,7 @@ function svDrop(){
   if (SV.viewer) try { SV.viewer.destroy(); } catch(e){}
   if (SV.blob) URL.revokeObjectURL(SV.blob);
   SV.overlay = SV.viewer = SV.blob = null;
-  $("svTools").style.display = "none"; $("svEdit").style.display = "none";
+  $("svTools").style.display = "none"; $("svEdit").style.display = $("svDel").style.display = "none";
   SV.kind = null; SV.shapes = []; $("sv").classList.remove("editing");
   $("svSvg").innerHTML = ""; $("svSvg").style.display = "none"; $("svNote").style.display = "none";
 }
@@ -4733,7 +4991,7 @@ async function svShow(i){
       msg.style.display = "none";
       SV.kind = "pano"; SV.shapes = svSaved(r);
       svOverlay();
-      $("svEdit").style.display = (window.isAdmin && window.viewMode === "admin") ? "" : "none";
+      $("svEdit").style.display = $("svDel").style.display = (window.isAdmin && window.viewMode === "admin") ? "" : "none";
       $("svEdit").textContent = "Annotate";
     };
     if (SV.viewer.isLoaded && SV.viewer.isLoaded()) ready(); else SV.viewer.on("load", ready);
@@ -4782,7 +5040,7 @@ const svR4 = v => Math.round(v * 10000) / 10000;
 const svClamp01 = v => Math.max(0, Math.min(1, v));
 function svPhotoReady(r, seq){
   SV.kind = "photo"; SV.shapes = [];
-  $("svEdit").style.display = (window.isAdmin && window.viewMode === "admin") ? "" : "none";
+  $("svEdit").style.display = $("svDel").style.display = (window.isAdmin && window.viewMode === "admin") ? "" : "none";
   $("svEdit").textContent = "Annotate";
   if (!/"kind"/.test(r.annot_json || "")) return;       // nothing drawn: don't fetch the engine
   svLibs().then(() => { if (seq !== SV.seq) return; SV.shapes = svSaved(r); svPhotoDraw(); })
@@ -4989,6 +5247,7 @@ async function svTool(id, btn){
     setTimeout(() => { if (SV.viewer) try { SV.viewer.resize(); } catch(e){} }, 0);   // the toolbar took room
   };
   $("svBack").onclick = svClose;
+  $("svDel").onclick = svRemove;
   $("svPrev").onclick = () => svShow(SV.i - 1);
   $("svNext").onclick = () => svShow(SV.i + 1);
   // photo: tap = zoom in / out around the tapped spot; swipe = next / previous
